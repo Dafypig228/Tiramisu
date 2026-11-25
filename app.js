@@ -1,6 +1,9 @@
 (function () {
   const QUESTIONS = window.SAT_QUESTIONS || [];
   const FORMULAS = window.SAT_FORMULAS || [];
+  if (window.FORMULA_OVERRIDES) {
+    QUESTIONS.forEach(q => { if (window.FORMULA_OVERRIDES[q.id]) q.formulas = window.FORMULA_OVERRIDES[q.id]; });
+  }
 
   /* ==================== DEFAULT SETTINGS & PERSISTENCE ==================== */
   const DEFAULT_SETTINGS = {
