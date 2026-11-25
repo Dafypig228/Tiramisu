@@ -71,6 +71,11 @@
     localStorage.setItem('sat_wb_cid', id);
     return id;
   })();
+  const peerId = sessionStorage.getItem('sat_wb_peer_id') || (() => {
+    const id = 'p_' + Math.random().toString(36).slice(2, 10);
+    sessionStorage.setItem('sat_wb_peer_id', id);
+    return id;
+  })();
 
   /* ==================== INDEXEDDB ==================== */
   let dbP = null;
@@ -245,22 +250,24 @@
     await joinRoom(code, localStorage.getItem('sat_wb_host_' + code) === clientId);
   }
 
-  async function leaveRoom(reloadBoard = true) {
-    if (hasLoadedCurrentQ) await saveWorkspace();
-    if (roomChannel && sb) await sb.removeChannel(roomChannel);
-    roomChannel = null; roomCode = null; isHost = false; peers = {};
-    Object.keys(peerLasers).forEach(k => delete peerLasers[k]);
-    document.getElementById('cursorsLayer').innerHTML = '';
-    document.getElementById('roomLiveControls').style.display = 'none';
-    document.getElementById('leaveRoomBtn').style.display = 'none';
-    rememberRoom('LOCAL');
-    if (reloadBoard) {
-      await switchQuestion(currentIndex, false, true);
-      toast('Switched to Local Board');
-    }
+  let lastLiveStrokeSend = 0;
+
+  function setRoomStatus(msg, bg = '#f8f9fa', color = '#111') {
+    const el = document.getElementById('roomSyncStatus');
+    if (el) { el.textContent = msg; el.style.background = bg; el.style.color = color; }
   }
 
-  let lastLiveStrokeSend = 0;
+  function clearBoardMemory() {
+    hasLoadedCurrentQ = false;
+    objects = [];
+    boardWidgets = [];
+    desmosPhotos = [];
+    savedDesmosState = null;
+    diagramScale = 1;
+    selectedId = null;
+    document.querySelectorAll('.board-widget').forEach(w => w.remove());
+    if (desmosCalc) desmosCalc = null;
+  }
 
   function mergeRemoteObject(obj) {
     if (!obj || !obj.id) return;
@@ -275,14 +282,18 @@
     roomChannel.send({
       type: 'broadcast',
       event: 'obj_upsert',
-      payload: { sender: clientId, questionId: currentQ().id, obj }
+      payload: { sender: peerId, questionId: currentQ().id, obj }
     });
   }
 
   async function joinRoom(code, hostFlag = false) {
     code = (code || '').trim().toUpperCase();
     if (!code) return;
+
+    // 1. Save OLD room first, then wipe in-memory canvas BEFORE switching activeRoom!
     if (hasLoadedCurrentQ && activeRoom !== code) await saveWorkspace();
+    clearBoardMemory();
+
     if (roomChannel && sb) { await sb.removeChannel(roomChannel); roomChannel = null; }
 
     if (hostFlag) localStorage.setItem('sat_wb_host_' + code, clientId);
@@ -294,16 +305,21 @@
     if (!hasSb) {
       document.getElementById('roomLiveControls').style.display = 'none';
       document.getElementById('leaveRoomBtn').style.display = 'inline-flex';
+      setRoomStatus(`⚠️ Local only (${code}) — add Supabase URL & Key in Settings to sync devices`, '#fef3c7', '#92400e');
       await switchQuestion(currentIndex, false, true);
-      toast(`Room ${code} is LOCAL ONLY (add Supabase URL & Key to share live)`);
+      toast(`Room ${code} (local only — no Supabase key)`);
       return;
     }
 
     document.getElementById('roomLiveControls').style.display = 'flex';
     document.getElementById('leaveRoomBtn').style.display = 'inline-flex';
+    setRoomStatus(`⏳ Connecting to live room ${code}...`, '#f8f9fa', '#111');
 
     const { data: existing, error: fetchErr } = await sb.from('rooms').select('*').eq('room_code', code).maybeSingle();
-    if (fetchErr) console.warn('Room fetch:', fetchErr.message);
+    if (fetchErr) {
+      console.warn('Room fetch:', fetchErr.message);
+      setRoomStatus(`⚠️ DB warning: ${fetchErr.message} (live broadcast still connecting)`, '#fef3c7', '#92400e');
+    }
 
     if (existing) {
       if (existing.host_id === clientId) {
@@ -327,7 +343,7 @@
     document.getElementById('tutorLockToggle').disabled = !isHost;
 
     const myName = document.getElementById('roomNameInput').value || 'Friend';
-    roomChannel = sb.channel(`room:${code}`, { config: { presence: { key: clientId } } });
+    roomChannel = sb.channel(`room:${code}`, { config: { presence: { key: peerId } } });
 
     roomChannel
       .on('presence', { event: 'sync' }, () => {
@@ -335,25 +351,35 @@
         const names = Object.values(st).flat().map(u => u.name || 'Friend');
         document.getElementById('roomPeersList').textContent = `Online (${names.length}): ${names.join(', ')}`;
         document.getElementById('roomBadgeText').textContent = `${code} (${names.length})`;
+        setRoomStatus(`🟢 Live in ${code} · ${names.length} online (${names.join(', ')})`, '#dcfce7', '#166534');
       })
-      .on('broadcast', { event: 'request_sync' }, ({ payload }) => {
-        if (payload.sender === clientId) return;
+      .on('presence', { event: 'join' }, ({ key }) => {
+        if (key === peerId) return;
         if (isHost || objects.length) {
           roomChannel.send({
             type: 'broadcast', event: 'board_sync',
-            payload: { sender: clientId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
+            payload: { sender: peerId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
+          });
+        }
+      })
+      .on('broadcast', { event: 'request_sync' }, ({ payload }) => {
+        if (payload.sender === peerId) return;
+        if (isHost || objects.length) {
+          roomChannel.send({
+            type: 'broadcast', event: 'board_sync',
+            payload: { sender: peerId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
           });
         }
       })
       .on('broadcast', { event: 'obj_upsert' }, ({ payload }) => {
-        if (payload.sender === clientId) return;
+        if (payload.sender === peerId) return;
         if (payload.questionId !== currentQ().id) return;
         mergeRemoteObject(payload.obj);
         renderBoard();
         saveWorkspace();
       })
       .on('broadcast', { event: 'board_sync' }, async ({ payload }) => {
-        if (payload.sender === clientId) return;
+        if (payload.sender === peerId) return;
         if (payload.questionId && payload.questionId !== currentQ().id) {
           const idx = QUESTIONS.findIndex(q => q.id === payload.questionId);
           if (idx !== -1) await switchQuestion(idx, true);
@@ -367,7 +393,7 @@
         await saveWorkspace();
       })
       .on('broadcast', { event: 'cursor' }, ({ payload }) => {
-        if (payload.sender === clientId) return;
+        if (payload.sender === peerId) return;
         peers[payload.sender] = payload;
         if (payload.tool === 'laser') {
           if (!peerLasers[payload.sender]) peerLasers[payload.sender] = { points: [] };
@@ -383,11 +409,30 @@
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          await roomChannel.track({ id: clientId, name: myName });
-          await roomChannel.send({ type: 'broadcast', event: 'request_sync', payload: { sender: clientId } });
+          await roomChannel.track({ id: peerId, name: myName });
+          await roomChannel.send({ type: 'broadcast', event: 'request_sync', payload: { sender: peerId } });
           toast(`Connected live to room ${code}`);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setRoomStatus(`🔴 Realtime connection error (${status})`, '#fee2e2', '#991b1b');
         }
       });
+  }
+
+  async function leaveRoom(reloadBoard = true) {
+    if (hasLoadedCurrentQ) await saveWorkspace();
+    clearBoardMemory();
+    if (roomChannel && sb) await sb.removeChannel(roomChannel);
+    roomChannel = null; roomCode = null; isHost = false; peers = {};
+    Object.keys(peerLasers).forEach(k => delete peerLasers[k]);
+    document.getElementById('cursorsLayer').innerHTML = '';
+    document.getElementById('roomLiveControls').style.display = 'none';
+    document.getElementById('leaveRoomBtn').style.display = 'none';
+    setRoomStatus('Local Board (offline)', '#f8f9fa', '#111');
+    rememberRoom('LOCAL');
+    if (reloadBoard) {
+      await switchQuestion(currentIndex, false, true);
+      toast('Switched to Local Board');
+    }
   }
 
   async function applyRoomSnapshot(r) {
@@ -416,7 +461,7 @@
     if (roomChannel) {
       roomChannel.send({
         type: 'broadcast', event: 'board_sync',
-        payload: { sender: clientId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
+        payload: { sender: peerId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
       });
     }
     if (sb && (!tutorLocked || isHost)) {
