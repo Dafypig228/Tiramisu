@@ -6,6 +6,7 @@
   const DEFAULT_SETTINGS = {
     smartPass: true,
     panButton: 2, // 2 = right click, 1 = middle click
+    zoomSpeed: 22,
     wheelMode: "ctrlZoom",
     stylusOnly: false,
     defaultTool: "pen",
@@ -169,33 +170,30 @@
   let peers = {}; // { clientId: { name, x, y } }
   let lastCursorSend = 0;
 
-  function initSupabase(silent = false) {
-    if (
-      !settings.sbUrl ||
-      !settings.sbKey ||
-      typeof window.supabase === "undefined"
-    ) {
-      sb = null;
-      document.getElementById("sbStatusText").textContent =
-        "Local mode (IndexedDB)";
-      return false;
-    }
-    try {
-      sb = window.supabase.createClient(
-        settings.sbUrl.trim(),
-        settings.sbKey.trim(),
-      );
-      document.getElementById("sbStatusText").textContent =
-        "Connected to Supabase";
-      if (!silent) toast("Supabase connected");
-      return true;
-    } catch {
-      sb = null;
-      document.getElementById("sbStatusText").textContent =
-        "Invalid Supabase URL/Key";
-      return false;
-    }
+  async function initSupabase(silent = false) {
+  const url = (settings.sbUrl || window.APP_CONFIG?.SUPABASE_URL || '').trim();
+  const key = (settings.sbKey || window.APP_CONFIG?.SUPABASE_ANON_KEY || '').trim();
+  if (!url || !key || typeof window.supabase === 'undefined') {
+    sb = null;
+    document.getElementById('sbStatusText').textContent = 'Local mode (add keys in config.js)';
+    return false;
   }
+  try {
+    sb = window.supabase.createClient(url, key);
+    // Auto anonymous login so friends have a real Supabase session with zero signup
+    const { data: sess } = await sb.auth.getSession();
+    if (!sess?.session) {
+      await sb.auth.signInAnonymously().catch(() => {});
+    }
+    document.getElementById('sbStatusText').textContent = 'Connected (Auto-Login Ready)';
+    if (!silent) toast('Supabase connected');
+    return true;
+  } catch {
+    sb = null;
+    document.getElementById('sbStatusText').textContent = 'Invalid Supabase URL/Key';
+    return false;
+  }
+}
 
   async function syncProfileToSupabase() {
     if (!sb) return;
@@ -605,27 +603,18 @@
     }
   });
 
-  boardStage.addEventListener(
-    "wheel",
-    (e) => {
-      if (
-        e.target.closest(".side-drawer") ||
-        e.target.closest(".peek-window") ||
-        e.target.closest(".desmos-embed") ||
-        e.target.closest(".modal")
-      )
-        return;
-      e.preventDefault();
-      if (settings.wheelMode === "alwaysZoom" || e.ctrlKey || e.metaKey)
-        zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.1 : 0.91);
-      else {
-        cam.x -= e.deltaX;
-        cam.y -= e.deltaY;
-        applyCamera();
-      }
-    },
-    { passive: false },
-  );
+  boardStage.addEventListener('wheel', (e) => {
+  if (e.target.closest('.side-drawer') || e.target.closest('.peek-window') || e.target.closest('.desmos-embed') || e.target.closest('.modal')) return;
+  e.preventDefault();
+  const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+  if (settings.wheelMode === 'alwaysZoom' || e.ctrlKey || e.metaKey) {
+    const clamped = Math.max(-45, Math.min(45, dy));
+    const speed = (Number(settings.zoomSpeed) || 22) / 10000;
+    zoomAt(e.clientX, e.clientY, Math.exp(-clamped * speed));
+  } else {
+    cam.x -= e.deltaX; cam.y -= e.deltaY; applyCamera();
+  }
+}, { passive: false });
 
   document.getElementById("boardZoomOut").onclick = () =>
     zoomAt(window.innerWidth / 2, window.innerHeight / 2, 0.86);
@@ -2057,18 +2046,14 @@
   peekView.addEventListener("pointerup", () => {
     pDrag = null;
   });
-  peekView.addEventListener(
-    "wheel",
-    (e) => {
-      e.preventDefault();
-      pZoom = Math.min(
-        4.5,
-        Math.max(0.25, pZoom * (e.deltaY < 0 ? 1.12 : 0.89)),
-      );
-      applyPeek();
-    },
-    { passive: false },
-  );
+  peekView.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+  const clamped = Math.max(-45, Math.min(45, dy));
+  const speed = (Number(settings.zoomSpeed) || 22) / 10000;
+  pZoom = Math.min(4.5, Math.max(0.25, pZoom * Math.exp(-clamped * speed)));
+  applyPeek();
+}, { passive: false });
   (function dragPeekWin() {
     const h = document.getElementById("peekDrag");
     let d = null;
@@ -2235,6 +2220,13 @@
   let listeningKeybind = null;
 
   function populateSettingsUI() {
+    document.getElementById('setZoomSpeed').value = settings.zoomSpeed;
+    document.getElementById('zoomSpeedLabel').textContent = settings.zoomSpeed;
+    document.getElementById('setZoomSpeed').oninput = (e) => {
+       settings.zoomSpeed = Number(e.target.value);
+       document.getElementById('zoomSpeedLabel').textContent = e.target.value;
+        saveSettings();
+    };
     document.getElementById("setSmartPass").checked = !!settings.smartPass;
     document.getElementById("setPanButton").value = String(settings.panButton);
     document.getElementById("setWheelMode").value = settings.wheelMode;
@@ -2487,6 +2479,9 @@
     initTopicDropdown();
     resizeCanvas();
     initSupabase(true);
+    const savedName = localStorage.getItem('sat_wb_name') || ('Friend-' + clientId.slice(-3));
+    document.getElementById('roomNameInput').value = savedName;
+    document.getElementById('roomNameInput').onchange = (e) => localStorage.setItem('sat_wb_name', e.target.value);
     setTool(settings.defaultTool || "pen");
     await switchQuestion(0);
 
