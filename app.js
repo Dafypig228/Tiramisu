@@ -1037,7 +1037,7 @@
   function spawnFormulaOnBoard(formulaId) {
     const f = FORMULAS.find(x => x.id === formulaId); if (!f) return;
     const pos = screenToWorld(window.innerWidth * 0.14, window.innerHeight * 0.24);
-    const wd = { id: 'bw_' + Date.now(), kind: 'formula', formulaId, x: pos.x, y: pos.y, w: 325, h: 130 };
+    const wd = { id: 'bw_' + Date.now(), kind: 'formula', formulaId, x: pos.x, y: pos.y, w: 350, h: 185, scaleMode: true, baseW: 350, contentScale: 1 };
     boardWidgets.push(wd); renderBoardWidget(wd); saveWorkspace();
     toast('Formula placed on board');
   }
@@ -1057,13 +1057,60 @@
     if (wd.kind === 'formula') {
       const f = FORMULAS.find(x => x.id === wd.formulaId) || FORMULAS[0];
       el.innerHTML = `
-        <div class="bw-head"><span>📐 ${f.title}</span><button class="bw-close">✕</button></div>
-        <div class="bw-body" style="padding:8px;display:grid;grid-template-columns:80px minmax(0, 1fr);gap:8px;align-items:center;overflow-y:auto;">
-          <div class="f-card-vis" style="width:80px;height:68px;">${f.svg}</div>
-          <div style="min-width:0;"><div class="f-card-math">${f.math}</div><div class="f-card-note">${f.note}</div>${f.trap ? `<div class="f-card-trap">Trap: ${f.trap}</div>` : ''}</div>
-        </div><div class="bw-resize"></div>`;
+        <div class="bw-head">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📐 ${f.title}</span>
+          <div style="display:flex;gap:3px;align-items:center;flex-shrink:0;">
+            <button class="bw-scale-toggle" title="Toggle scaling text & diagram with the box"></button>
+            <button class="bw-scale-reset" title="Reset text & diagram to 100%">1:1</button>
+            <button class="bw-close">✕</button>
+          </div>
+        </div>
+        <div class="bw-body" style="overflow-y:auto;overflow-x:hidden;">
+          <div class="bw-scale-inner" style="padding:8px;display:grid;grid-template-columns:80px minmax(0,1fr);gap:8px;align-items:center;transform-origin:0 0;">
+            <div class="f-card-vis" style="width:80px;height:68px;">${f.svg}</div>
+            <div style="min-width:0;"><div class="f-card-math">${f.math}</div><div class="f-card-note">${f.note}</div>${f.trap ? `<div class="f-card-trap">Trap: ${f.trap}</div>` : ''}</div>
+          </div>
+        </div>
+        <div class="bw-resize"></div>`;
+
+      const inner = el.querySelector('.bw-scale-inner');
+      const toggleBtn = el.querySelector('.bw-scale-toggle');
+
+      const applyWidgetScale = () => {
+        if (wd.scaleMode === undefined) wd.scaleMode = true;
+        if (!wd.baseW) wd.baseW = wd.w || 350;
+        if (!wd.contentScale) wd.contentScale = 1;
+        if (wd.scaleMode) {
+          wd.contentScale = Math.max(0.6, Math.min(3, wd.w / wd.baseW));
+        }
+        const s = wd.contentScale;
+        inner.style.transform = `scale(${s})`;
+        inner.style.width = `${100 / s}%`;
+        toggleBtn.textContent = wd.scaleMode ? 'Aa: Scale' : 'Aa: Lock';
+        toggleBtn.style.background = wd.scaleMode ? '#111' : 'transparent';
+        toggleBtn.style.color = wd.scaleMode ? '#fff' : '#111';
+      };
+
+      toggleBtn.onclick = (e) => {
+        e.stopPropagation();
+        wd.scaleMode = !wd.scaleMode;
+        if (wd.scaleMode) wd.baseW = wd.w / (wd.contentScale || 1);
+        applyWidgetScale();
+        saveWorkspace();
+      };
+      el.querySelector('.bw-scale-reset').onclick = (e) => {
+        e.stopPropagation();
+        wd.contentScale = 1;
+        wd.baseW = wd.w;
+        applyWidgetScale();
+        saveWorkspace();
+      };
       el.querySelector('.bw-close').onclick = () => { el.remove(); boardWidgets = boardWidgets.filter(x => x.id !== wd.id); saveWorkspace(); };
-      worldLayer.appendChild(el); renderMath(el); makeWidgetInteractive(el, wd);
+
+      worldLayer.appendChild(el);
+      renderMath(el);
+      applyWidgetScale();
+      makeWidgetInteractive(el, wd, applyWidgetScale);
     } else if (wd.kind === 'desmos') {
       el.id = 'desmosBoardWidget';
       el.innerHTML = `
