@@ -1058,9 +1058,9 @@
       const f = FORMULAS.find(x => x.id === wd.formulaId) || FORMULAS[0];
       el.innerHTML = `
         <div class="bw-head"><span>📐 ${f.title}</span><button class="bw-close">✕</button></div>
-        <div class="bw-body" style="padding:8px;display:grid;grid-template-columns:80px 1fr;gap:8px;align-items:center;">
+        <div class="bw-body" style="padding:8px;display:grid;grid-template-columns:80px minmax(0, 1fr);gap:8px;align-items:center;overflow-y:auto;">
           <div class="f-card-vis" style="width:80px;height:68px;">${f.svg}</div>
-          <div><div class="f-card-math">${f.math}</div><div class="f-card-note">${f.note}</div>${f.trap ? `<div class="f-card-trap">Trap: ${f.trap}</div>` : ''}</div>
+          <div style="min-width:0;"><div class="f-card-math">${f.math}</div><div class="f-card-note">${f.note}</div>${f.trap ? `<div class="f-card-trap">Trap: ${f.trap}</div>` : ''}</div>
         </div><div class="bw-resize"></div>`;
       el.querySelector('.bw-close').onclick = () => { el.remove(); boardWidgets = boardWidgets.filter(x => x.id !== wd.id); saveWorkspace(); };
       worldLayer.appendChild(el); renderMath(el); makeWidgetInteractive(el, wd);
@@ -1156,17 +1156,54 @@
       if (formulaTopic === 'all') return true;
       return f.topic === formulaTopic;
     });
-    list.innerHTML = items.map(f => `
-      <div class="f-card">
-        <div class="f-card-vis">${f.svg}</div>
-        <div>
-          <div class="f-card-title"><span>${f.title}</span><button class="pin-mini-btn" data-fid="${f.id}">+ Board</button></div>
-          <div class="f-card-math">${f.math}</div>
-          <div class="f-card-note">${f.note}</div>
-          ${f.trap ? `<div class="f-card-trap">Trap: ${f.trap}</div>` : ''}
-        </div>
-      </div>`).join('') || '<div style="font-size:12px;color:#6b7280;">No match. Try "All".</div>';
-    list.querySelectorAll('.pin-mini-btn').forEach(b => { b.onclick = () => spawnFormulaOnBoard(b.dataset.fid); });
+
+    list.innerHTML = '';
+    if (!items.length) {
+      list.innerHTML = '<div style="font-size:12px;color:#6b7280;">No match. Try "All".</div>';
+      return;
+    }
+
+    items.forEach(f => {
+      const card = document.createElement('div');
+      card.className = 'f-card';
+
+      const vis = document.createElement('div');
+      vis.className = 'f-card-vis';
+      vis.innerHTML = f.svg || '';
+
+      const body = document.createElement('div');
+
+      const titleRow = document.createElement('div');
+      titleRow.className = 'f-card-title';
+      const titleSpan = document.createElement('span');
+      titleSpan.textContent = f.title;
+      const pinBtn = document.createElement('button');
+      pinBtn.className = 'pin-mini-btn';
+      pinBtn.textContent = '+ Board';
+      pinBtn.onclick = () => spawnFormulaOnBoard(f.id);
+      titleRow.append(titleSpan, pinBtn);
+
+      const mathEl = document.createElement('div');
+      mathEl.className = 'f-card-math';
+      mathEl.textContent = f.math;
+
+      const noteEl = document.createElement('div');
+      noteEl.className = 'f-card-note';
+      noteEl.textContent = f.note;
+
+      body.append(titleRow, mathEl, noteEl);
+
+      if (f.trap) {
+        const trapEl = document.createElement('div');
+        trapEl.className = 'f-card-trap';
+        trapEl.textContent = 'Trap: ' + f.trap;
+        body.appendChild(trapEl);
+      }
+
+      card.append(vis, body);
+      list.appendChild(card);
+    });
+
     renderMath(list);
   }
   document.getElementById('topicChips').querySelectorAll('.chip-btn').forEach(b => {
