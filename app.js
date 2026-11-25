@@ -245,6 +245,40 @@
     await joinRoom(code, localStorage.getItem('sat_wb_host_' + code) === clientId);
   }
 
+  async function leaveRoom(reloadBoard = true) {
+    if (hasLoadedCurrentQ) await saveWorkspace();
+    if (roomChannel && sb) await sb.removeChannel(roomChannel);
+    roomChannel = null; roomCode = null; isHost = false; peers = {};
+    Object.keys(peerLasers).forEach(k => delete peerLasers[k]);
+    document.getElementById('cursorsLayer').innerHTML = '';
+    document.getElementById('roomLiveControls').style.display = 'none';
+    document.getElementById('leaveRoomBtn').style.display = 'none';
+    rememberRoom('LOCAL');
+    if (reloadBoard) {
+      await switchQuestion(currentIndex, false, true);
+      toast('Switched to Local Board');
+    }
+  }
+
+  let lastLiveStrokeSend = 0;
+
+  function mergeRemoteObject(obj) {
+    if (!obj || !obj.id) return;
+    const idx = objects.findIndex(o => o.id === obj.id);
+    if (idx !== -1) objects[idx] = obj;
+    else objects.push(obj);
+  }
+
+  function broadcastObject(obj) {
+    if (!roomChannel || !obj) return;
+    if (tutorLocked && !isHost) return;
+    roomChannel.send({
+      type: 'broadcast',
+      event: 'obj_upsert',
+      payload: { sender: clientId, questionId: currentQ().id, obj }
+    });
+  }
+
   async function joinRoom(code, hostFlag = false) {
     code = (code || '').trim().toUpperCase();
     if (!code) return;
@@ -261,14 +295,16 @@
       document.getElementById('roomLiveControls').style.display = 'none';
       document.getElementById('leaveRoomBtn').style.display = 'inline-flex';
       await switchQuestion(currentIndex, false, true);
-      toast(`Swapped to room ${code} (saved locally)`);
+      toast(`Room ${code} is LOCAL ONLY (add Supabase URL & Key to share live)`);
       return;
     }
 
     document.getElementById('roomLiveControls').style.display = 'flex';
     document.getElementById('leaveRoomBtn').style.display = 'inline-flex';
 
-    const { data: existing } = await sb.from('rooms').select('*').eq('room_code', code).maybeSingle();
+    const { data: existing, error: fetchErr } = await sb.from('rooms').select('*').eq('room_code', code).maybeSingle();
+    if (fetchErr) console.warn('Room fetch:', fetchErr.message);
+
     if (existing) {
       if (existing.host_id === clientId) {
         isHost = true;
@@ -279,12 +315,14 @@
       isHost = true;
       localStorage.setItem('sat_wb_host_' + code, clientId);
       await switchQuestion(currentIndex, false, true);
-      await sb.from('rooms').upsert({
+      const { error: upErr } = await sb.from('rooms').upsert({
         room_code: code, host_id: clientId, tutor_locked: tutorLocked,
         current_question_id: currentQ().id, diagram_scale: diagramScale,
         board_objects: objects, board_widgets: boardWidgets,
-        desmos_state: desmosCalc ? desmosCalc.getState() : savedDesmosState
-      });
+        desmos_state: desmosCalc ? desmosCalc.getState() : savedDesmosState,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'room_code' });
+      if (upErr) console.warn('Room create:', upErr.message);
     }
     document.getElementById('tutorLockToggle').disabled = !isHost;
 
@@ -297,6 +335,22 @@
         const names = Object.values(st).flat().map(u => u.name || 'Friend');
         document.getElementById('roomPeersList').textContent = `Online (${names.length}): ${names.join(', ')}`;
         document.getElementById('roomBadgeText').textContent = `${code} (${names.length})`;
+      })
+      .on('broadcast', { event: 'request_sync' }, ({ payload }) => {
+        if (payload.sender === clientId) return;
+        if (isHost || objects.length) {
+          roomChannel.send({
+            type: 'broadcast', event: 'board_sync',
+            payload: { sender: clientId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
+          });
+        }
+      })
+      .on('broadcast', { event: 'obj_upsert' }, ({ payload }) => {
+        if (payload.sender === clientId) return;
+        if (payload.questionId !== currentQ().id) return;
+        mergeRemoteObject(payload.obj);
+        renderBoard();
+        saveWorkspace();
       })
       .on('broadcast', { event: 'board_sync' }, async ({ payload }) => {
         if (payload.sender === clientId) return;
@@ -330,24 +384,10 @@
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await roomChannel.track({ id: clientId, name: myName });
-          toast(`Connected to room ${code}`);
+          await roomChannel.send({ type: 'broadcast', event: 'request_sync', payload: { sender: clientId } });
+          toast(`Connected live to room ${code}`);
         }
       });
-  }
-
-  async function leaveRoom(reloadBoard = true) {
-    if (hasLoadedCurrentQ) await saveWorkspace();
-    if (roomChannel && sb) await sb.removeChannel(roomChannel);
-    roomChannel = null; roomCode = null; isHost = false; peers = {};
-    Object.keys(peerLasers).forEach(k => delete peerLasers[k]);
-    document.getElementById('cursorsLayer').innerHTML = '';
-    document.getElementById('roomLiveControls').style.display = 'none';
-    document.getElementById('leaveRoomBtn').style.display = 'none';
-    rememberRoom('LOCAL');
-    if (reloadBoard) {
-      await switchQuestion(currentIndex, false, true);
-      toast('Switched to Local Board');
-    }
   }
 
   async function applyRoomSnapshot(r) {
@@ -380,13 +420,17 @@
       });
     }
     if (sb && (!tutorLocked || isHost)) {
-      sb.from('rooms').upsert({
-        room_code: roomCode, host_id: isHost ? clientId : undefined, tutor_locked: tutorLocked,
-        current_question_id: currentQ().id, diagram_scale: diagramScale,
-        board_objects: objects, board_widgets: boardWidgets,
+      sb.from('rooms').update({
+        tutor_locked: tutorLocked,
+        current_question_id: currentQ().id,
+        diagram_scale: diagramScale,
+        board_objects: objects,
+        board_widgets: boardWidgets,
         desmos_state: desmosCalc ? desmosCalc.getState() : savedDesmosState,
         updated_at: new Date().toISOString()
-      }).then(() => {});
+      }).eq('room_code', roomCode).then(({ error }) => {
+        if (error) console.warn('Room DB update:', error.message);
+      });
     }
   }
 
@@ -968,33 +1012,79 @@
     else if (pState.mode === 'erase') { const hit = hitTest(pt); if (hit) { objects = objects.filter(o => o.id !== hit.id); renderBoard(); } }
     else if (pState.mode === 'stroke' && !pState.snapped) {
       pState.obj.points.push(pt); pState.t = Date.now(); clearTimeout(pState.timer);
+      if (roomChannel && Date.now() - lastLiveStrokeSend > 65) {
+        lastLiveStrokeSend = Date.now();
+        broadcastObject(pState.obj);
+      }
       if (snapOn && tool === 'pen') {
         const delay = Number(settings.snapDelay) || 400;
         pState.timer = setTimeout(() => {
           if (pState && pState.mode === 'stroke' && Date.now() - pState.t >= delay - 60) {
             const sn = trySnap(pState.obj);
-            if (sn) { const idx = objects.findIndex(o => o.id === pState.obj.id); if (idx !== -1) objects[idx] = sn; pState.snapped = true; renderBoard(); }
+            if (sn) {
+              const idx = objects.findIndex(o => o.id === pState.obj.id);
+              if (idx !== -1) objects[idx] = sn;
+              pState.obj = sn; pState.snapped = true;
+              renderBoard(); broadcastObject(sn);
+            }
           }
         }, delay);
       }
       renderBoard();
-    } else if (pState.mode === 'shape') { pState.obj.w = pt.x - pState.obj.x; pState.obj.h = pt.y - pState.obj.y; renderBoard(); }
-    else if (pState.mode === 'move') {
+    } else if (pState.mode === 'shape') {
+      pState.obj.w = pt.x - pState.obj.x; pState.obj.h = pt.y - pState.obj.y;
+      if (roomChannel && Date.now() - lastLiveStrokeSend > 65) {
+        lastLiveStrokeSend = Date.now();
+        broadcastObject(pState.obj);
+      }
+      renderBoard();
+    } else if (pState.mode === 'move') {
       const dx = pt.x - pState.sx, dy = pt.y - pState.sy;
       if (pState.obj.type === 'stroke') pState.obj.points = pState.opts.map(p => ({ x: p.x + dx, y: p.y + dy }));
       else { pState.obj.x = pState.ox + dx; pState.obj.y = pState.oy + dy; }
+      if (roomChannel && Date.now() - lastLiveStrokeSend > 65) {
+        lastLiveStrokeSend = Date.now();
+        broadcastObject(pState.obj);
+      }
       renderBoard();
     } else if (pState.mode === 'resize') {
       const dx = pt.x - pState.sx, dy = pt.y - pState.sy;
       if (pState.obj.type === 'text') pState.obj.fontSize = Math.max(12, Math.min(48, Number(settings.textSize) + Math.round(dy / 5)));
       else { pState.obj.w = Math.max(20, pState.ow + dx); pState.obj.h = Math.max(20, pState.oh + dy); }
+      if (roomChannel && Date.now() - lastLiveStrokeSend > 65) {
+        lastLiveStrokeSend = Date.now();
+        broadcastObject(pState.obj);
+      }
       renderBoard();
     }
   });
 
   boardCanvas.addEventListener('pointerup', () => {
     laserActive = false;
-    if (pState) { clearTimeout(pState.timer); pState = null; saveWorkspace(); broadcastBoard(); }
+    if (pState) {
+      clearTimeout(pState.timer);
+      const finishedObj = pState.obj;
+      const wasErase = pState.mode === 'erase';
+      pState = null;
+      saveWorkspace();
+      if (finishedObj && !wasErase) {
+        broadcastObject(finishedObj);
+        if (sb && roomCode && (!tutorLocked || isHost)) {
+          sb.from('rooms').update({
+            current_question_id: currentQ().id,
+            diagram_scale: diagramScale,
+            board_objects: objects,
+            board_widgets: boardWidgets,
+            desmos_state: desmosCalc ? desmosCalc.getState() : savedDesmosState,
+            updated_at: new Date().toISOString()
+          }).eq('room_code', roomCode).then(({ error }) => {
+            if (error) console.warn('Room DB update:', error.message);
+          });
+        }
+      } else {
+        broadcastBoard();
+      }
+    }
   });
   boardCanvas.addEventListener('dblclick', (e) => {
     const pt = screenToWorld(e.clientX, e.clientY);
