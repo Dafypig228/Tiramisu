@@ -123,14 +123,13 @@
   let snapOn = true;
   let spaceHeld = false;
 
-  // Per-question Undo/Redo history so switching questions NEVER loses Ctrl+Z!
   const undoByQ = {};
   const redoByQ = {};
   let selectedId = null;
 
   let laserTrail = [];
   let laserActive = false;
-  const peerLasers = {}; // { [senderId]: { points: [{x,y,t}], wx, wy, t } }
+  const peerLasers = {};
   const imgCache = new Map();
 
   /* ==================== SUPABASE CLIENT & LIVE MULTIPLAYER ==================== */
@@ -479,7 +478,6 @@
     if (rightPan) { rightPan = null; boardStage.style.cursor = ''; setTool(tool, shapeType); }
   });
 
-  // Smooth proportional touchpad & wheel scaling
   boardStage.addEventListener('wheel', (e) => {
     if (e.target.closest('.side-drawer') || e.target.closest('.peek-window') || e.target.closest('.desmos-embed') || e.target.closest('.modal')) return;
     e.preventDefault();
@@ -726,7 +724,6 @@
       }
     }
 
-    // Local laser + Remote Peer Lasers (seen on all devices!)
     if (!skipCam) {
       const nowTs = Date.now();
       const fadeMs = Number(settings.laserFade) || 1300;
@@ -948,6 +945,73 @@
     pushUndo(); objects = []; selectedId = null; renderBoard(); saveWorkspace(); broadcastBoard();
   };
 
+  /* ==================== DESMOS COMPOSITE SNAPSHOT (EQUATIONS + GRAPH!) ==================== */
+  function formatDesmosLatex(expr) {
+    if (expr.type === 'table' && expr.columns) {
+      return 'Table: ' + expr.columns.map(c => c.latex + (c.values && c.values.length ? `=[${c.values.slice(0, 3).join(',')}]` : '')).join(' | ');
+    }
+    let s = (expr.latex || '')
+      .replace(/\\left|\\right/g, '')
+      .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1)/($2)')
+      .replace(/\\sqrt\{([^}]+)\}/g, '√($1)')
+      .replace(/\\pi/g, 'π')
+      .replace(/\\cdot/g, '·')
+      .replace(/\\times/g, '×')
+      .replace(/\\le/g, '≤')
+      .replace(/\\ge/g, '≥')
+      .replace(/\\sim/g, '~')
+      .replace(/\\theta/g, 'θ')
+      .replace(/\^2/g, '²')
+      .replace(/\^3/g, '³')
+      .replace(/\\text\{([^}]+)\}/g, '$1')
+      .replace(/[{}]/g, '');
+    if (desmosCalc && desmosCalc.expressionAnalysis && desmosCalc.expressionAnalysis[expr.id]) {
+      const ev = desmosCalc.expressionAnalysis[expr.id].evaluation;
+      if (ev && typeof ev.value === 'number' && !s.includes('=')) {
+        const rounded = Math.round(ev.value * 10000) / 10000;
+        s += `  = ${rounded}`;
+      }
+    }
+    return s;
+  }
+
+  function snapshotDesmosComposite() {
+    if (!desmosCalc) { toast('Put Desmos on board first'); return; }
+    const exprs = desmosCalc.getExpressions().filter(e => (e.latex && e.latex.trim()) || e.type === 'table');
+    desmosCalc.asyncScreenshot({ width: 460, height: 360, showLabels: true }, (graphUrl) => {
+      const gImg = new Image();
+      gImg.onload = () => {
+        const exprW = 240, graphW = 460, H = 360;
+        const c = document.createElement('canvas');
+        c.width = exprW + graphW; c.height = H;
+        const g = c.getContext('2d');
+        g.fillStyle = '#ffffff'; g.fillRect(0, 0, c.width, H);
+        // Header for expressions column
+        g.fillStyle = '#f8f9fa'; g.fillRect(0, 0, exprW, 28);
+        g.strokeStyle = '#e5e7eb'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(0, 28); g.lineTo(exprW, 28); g.moveTo(exprW, 0); g.lineTo(exprW, H); g.stroke();
+        g.fillStyle = '#111111'; g.font = 'bold 11px Inter, sans-serif';
+        g.fillText('DESMOS EXPRESSIONS', 10, 18);
+
+        let y = 46;
+        exprs.slice(0, 11).forEach((ex, i) => {
+          g.fillStyle = ex.color || '#111111';
+          g.beginPath(); g.arc(14, y - 4, 5, 0, Math.PI * 2); g.fill();
+          g.fillStyle = '#111111';
+          g.font = '600 12px Inter, sans-serif';
+          const txt = `${i + 1}. ${formatDesmosLatex(ex)}`;
+          g.fillText(txt.slice(0, 30), 26, y);
+          if (txt.length > 30) { y += 15; g.fillText(txt.slice(30, 60), 26, y); }
+          g.strokeStyle = '#f1f5f9'; g.beginPath(); g.moveTo(6, y + 8); g.lineTo(exprW - 6, y + 8); g.stroke();
+          y += 26;
+        });
+        g.drawImage(gImg, exprW, 0, graphW, H);
+        pinImageToBoard(c.toDataURL('image/png'));
+      };
+      gImg.src = graphUrl;
+    });
+  }
+
   /* ==================== ON-BOARD WIDGETS ==================== */
   function makeWidgetInteractive(el, wd, onResize) {
     const head = el.querySelector('.bw-head');
@@ -1005,7 +1069,7 @@
       el.innerHTML = `
         <div class="bw-head">
           <span>📈 Desmos (${settings.desmosAngles === 'deg' ? 'Deg' : 'Rad'})</span>
-          <div><button id="bwSnapDesmos" title="Pin snapshot to board">📸</button><button id="bwSaveDesmos" title="Save graph">💾</button><button class="bw-close">✕</button></div>
+          <div><button id="bwSnapDesmos" title="Pin equations + graph snapshot to board">📸</button><button id="bwSaveDesmos" title="Save graph">💾</button><button class="bw-close">✕</button></div>
         </div>
         <div class="bw-body desmos-embed"><div id="desmosMount" style="width:100%;height:100%;"></div></div><div class="bw-resize"></div>`;
       el.querySelector('.bw-close').onclick = () => {
@@ -1023,12 +1087,12 @@
         if (savedDesmosState) desmosCalc.setState(savedDesmosState);
       } else mount.innerHTML = '<div style="padding:18px;font-size:12px;color:#6b7280;">Offline — paste Desmos photo with Ctrl+V.</div>';
       el.querySelector('#bwSaveDesmos').onclick = () => { if (!desmosCalc) return; savedDesmosState = desmosCalc.getState(); saveWorkspace(); toast('Desmos saved'); };
-      el.querySelector('#bwSnapDesmos').onclick = () => { if (!desmosCalc) return; desmosCalc.asyncScreenshot({ width: 500, height: 360, showLabels: true }, (src) => pinImageToBoard(src)); };
+      el.querySelector('#bwSnapDesmos').onclick = snapshotDesmosComposite;
       makeWidgetInteractive(el, wd, () => { if (desmosCalc) desmosCalc.resize(); });
     }
   }
 
-  /* ==================== DRAWER (QUESTIONS / FORMULAS / DESMOS / PHOTOS) ==================== */
+  /* ==================== DRAWER ==================== */
   const sideDrawer = document.getElementById('sideDrawer');
   const views = { questions: document.getElementById('viewQuestions'), formulas: document.getElementById('viewFormulas'), desmos: document.getElementById('viewDesmos'), photos: document.getElementById('viewPhotos') };
   const subBtns = { questions: document.getElementById('subTabQuestions'), formulas: document.getElementById('subTabFormulas'), desmos: document.getElementById('subTabDesmos'), photos: document.getElementById('subTabPhotos') };
@@ -1126,14 +1190,14 @@
     }, 80);
   };
   document.getElementById('saveDesmosBtn').onclick = () => { if (!desmosCalc) return; savedDesmosState = desmosCalc.getState(); saveWorkspace(); toast('Desmos saved'); };
-  document.getElementById('snapDesmosBtn').onclick = () => { if (!desmosCalc) return; desmosCalc.asyncScreenshot({ width: 500, height: 360, showLabels: true }, (src) => pinImageToBoard(src)); };
+  document.getElementById('snapDesmosBtn').onclick = snapshotDesmosComposite;
 
   function pinImageToBoard(src) {
     pushUndo();
     const im = new Image();
     im.onload = () => {
-      const ratio = im.height / im.width || 0.72; const w = 360;
-      const pos = screenToWorld(window.innerWidth * 0.56, window.innerHeight * 0.28);
+      const ratio = im.height / im.width || 0.55; const w = Math.min(460, im.width || 420);
+      const pos = screenToWorld(window.innerWidth * 0.54, window.innerHeight * 0.28);
       const id = 'o_' + Date.now();
       objects.push({ id, type: 'image', src, x: pos.x, y: pos.y, w, h: w * ratio });
       selectedId = id; setTool('select'); renderBoard(); saveWorkspace(); broadcastBoard();
@@ -1378,7 +1442,7 @@
   document.getElementById('testSbBtn').onclick = () => { settings.sbUrl = document.getElementById('setSbUrl').value; settings.sbKey = document.getElementById('setSbKey').value; saveSettings(); initSupabase(false); };
   document.getElementById('resetSettingsBtn').onclick = () => { settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)); saveSettings(); populateSettingsUI(); renderColorPalette(); applyGrid(settings.defaultGrid); toast('Settings reset'); };
 
-  /* ==================== ROOM MODAL (INCLUDES ZERO-LEAK INVITE LINK) ==================== */
+  /* ==================== ROOM MODAL ==================== */
   const roomBackdrop = document.getElementById('roomBackdrop');
   document.getElementById('openRoomBtn').onclick = () => roomBackdrop.classList.add('show');
   document.getElementById('closeRoomBtn').onclick = () => roomBackdrop.classList.remove('show');
@@ -1436,7 +1500,6 @@
 
   /* ==================== BOOT ==================== */
   window.addEventListener('DOMContentLoaded', async () => {
-    // Support private ?cfg= invite URL (stores keys in friend's browser, never in GitHub!)
     const params = new URLSearchParams(location.search);
     const cfgParam = params.get('cfg');
     if (cfgParam) {
@@ -1469,4 +1532,4 @@
       joinRoom(urlRoom, false);
     }
   });
-})();
+  })();
