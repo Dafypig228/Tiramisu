@@ -1,1450 +1,381 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    />
-    <title>SAT Math Whiteboard</title>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>SAT Math Whiteboard</title>
 
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
-    />
-    <script
-      defer
-      src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
-    ></script>
-    <script
-      defer
-      src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
-    ></script>
-    <script src="https://www.desmos.com/api/v1.11/calculator.js?apiKey=dcb31709b452b1cf9dc26972add0fda6"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <script src="https://www.desmos.com/api/v1.11/calculator.js?apiKey=dcb31709b452b1cf9dc26972add0fda6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-    <style>
-      :root {
-        --bg: #ffffff;
-        --panel: #ffffff;
-        --soft: #f8f9fa;
-        --border: #e5e7eb;
-        --ink: #111111;
-        --muted: #6b7280;
-        --shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
-      }
-      * {
-        box-sizing: border-box;
-      }
-      html,
-      body {
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        background: var(--bg);
-        color: var(--ink);
-        font-family:
-          Inter,
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          Roboto,
-          sans-serif;
-        user-select: none;
-      }
+  <style>
+    :root { --bg:#fff; --panel:#fff; --soft:#f8f9fa; --border:#e5e7eb; --ink:#111; --muted:#6b7280; --shadow:0 4px 18px rgba(0,0,0,0.08); }
+    * { box-sizing: border-box; }
+    html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--ink); font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; user-select:none; }
+    .board-stage { position:relative; width:100vw; height:100vh; overflow:hidden; background:#fff; }
+    .board-stage.grid-dot { background-image:radial-gradient(#d1d5db 1px,transparent 1px); background-size:22px 22px; }
+    .board-stage.grid-square { background-image:linear-gradient(to right,#f1f5f9 1px,transparent 1px),linear-gradient(to bottom,#f1f5f9 1px,transparent 1px); background-size:24px 24px; }
+    .world-layer { position:absolute; top:0; left:0; transform-origin:0 0; z-index:5; pointer-events:none; }
 
-      .board-stage {
-        position: relative;
-        width: 100vw;
-        height: 100vh;
-        overflow: hidden;
-        background-color: #fff;
-      }
-      .board-stage.grid-dot {
-        background-image: radial-gradient(#d1d5db 1px, transparent 1px);
-        background-size: 22px 22px;
-      }
-      .board-stage.grid-square {
-        background-image:
-          linear-gradient(to right, #f1f5f9 1px, transparent 1px),
-          linear-gradient(to bottom, #f1f5f9 1px, transparent 1px);
-        background-size: 24px 24px;
-      }
+    .question-card { position:absolute; width:590px; left:-295px; top:-240px; background:rgba(255,255,255,0.95); border:1.5px solid #111; border-radius:12px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.04); pointer-events:auto; }
+    .q-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); margin-bottom:10px; }
+    .q-diagram-wrap { display:flex; flex-direction:column; align-items:center; margin-bottom:10px; }
+    .q-diagram-bar { display:inline-flex; align-items:center; gap:4px; padding:2px 7px; border:1px solid var(--border); border-radius:6px; background:var(--soft); font-size:11px; margin-bottom:6px; }
+    .q-diagram-bar button { border:none; background:transparent; color:var(--ink); font-weight:700; cursor:pointer; padding:1px 5px; border-radius:4px; }
+    .q-diagram-bar button:hover { background:#e5e7eb; }
+    .q-diagram-box { transform-origin:center top; display:inline-block; }
+    .q-diagram-box table { border-collapse:collapse; font-size:12px; background:#fff; }
+    .q-diagram-box th, .q-diagram-box td { border:1px solid #111; padding:4px 8px; text-align:center; }
+    .q-diagram-box th { background:#f3f4f6; font-weight:700; }
+    .q-prompt { font-size:15.5px; line-height:1.55; margin-bottom:12px; color:#111; }
+    .q-choices { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+    .choice-chip { display:flex; align-items:center; gap:8px; padding:7px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#111; font-size:14px; text-align:left; }
+    .choice-letter-hit { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border:1px solid #111; border-radius:6px; font-weight:800; font-size:12px; cursor:pointer; flex-shrink:0; background:#fff; }
+    .choice-letter-hit:hover { background:#f3f4f6; }
+    .choice-chip.selected { border-color:#111; background:#f3f4f6; }
+    .choice-chip.selected .choice-letter-hit { background:#111; color:#fff; }
+    .choice-chip.correct { background:#dcfce7; border-color:#16a34a; }
+    .choice-chip.wrong { background:#fee2e2; border-color:#dc2626; }
+    .gridin-row { display:flex; gap:8px; align-items:center; }
+    .gridin-input { flex:1; padding:8px 10px; border:1.5px solid #111; border-radius:8px; font-size:15px; font-weight:600; outline:none; }
 
-      .world-layer {
-        position: absolute;
-        top: 0;
-        left: 0;
-        transform-origin: 0 0;
-        z-index: 5;
-        pointer-events: none;
-      }
+    .board-widget { position:absolute; background:#fff; border:1.5px solid #111; border-radius:10px; box-shadow:0 6px 22px rgba(0,0,0,0.09); pointer-events:auto; display:flex; flex-direction:column; overflow:hidden; }
+    .bw-head { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:5px 8px; background:#f8f9fa; border-bottom:1px solid var(--border); font-size:11px; font-weight:800; cursor:move; }
+    .bw-head button { border:none; background:transparent; color:#111; cursor:pointer; font-size:12px; font-weight:700; padding:1px 5px; border-radius:4px; }
+    .bw-head button:hover { background:#e5e7eb; }
+    .bw-body { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+    .bw-resize { position:absolute; right:0; bottom:0; width:15px; height:15px; cursor:nwse-resize; background:linear-gradient(135deg,transparent 50%,#111 50%); opacity:0.45; }
+    .bw-resize:hover { opacity:1; }
 
-      /* Centered Question Card */
-      .question-card {
-        position: absolute;
-        width: 590px;
-        left: -295px;
-        top: -240px;
-        background: rgba(255, 255, 255, 0.95);
-        border: 1.5px solid #111111;
-        border-radius: 12px;
-        padding: 16px 18px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
-        pointer-events: auto;
-      }
-      .q-meta {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        font-size: 11px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: var(--muted);
-        margin-bottom: 10px;
-      }
-      .q-diagram-wrap {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        margin-bottom: 10px;
-      }
-      .q-diagram-bar {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 2px 7px;
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        background: var(--soft);
-        font-size: 11px;
-        margin-bottom: 6px;
-      }
-      .q-diagram-bar button {
-        border: none;
-        background: transparent;
-        color: var(--ink);
-        font-weight: 700;
-        cursor: pointer;
-        padding: 1px 5px;
-        border-radius: 4px;
-      }
-      .q-diagram-bar button:hover {
-        background: #e5e7eb;
-      }
-      .q-diagram-box {
-        transform-origin: center top;
-        display: inline-block;
-      }
-      .q-diagram-box table {
-        border-collapse: collapse;
-        font-size: 12px;
-        background: #fff;
-      }
-      .q-diagram-box th,
-      .q-diagram-box td {
-        border: 1px solid #111111;
-        padding: 4px 8px;
-        text-align: center;
-      }
-      .q-diagram-box th {
-        background: #f3f4f6;
-        font-weight: 700;
-      }
+    #boardCanvas { position:absolute; inset:0; width:100%; height:100%; z-index:15; touch-action:none; }
+    #boardCanvas.pass-through { pointer-events:none; }
+    #cursorsLayer { position:fixed; inset:0; pointer-events:none; z-index:35; overflow:hidden; }
+    .peer-cursor { position:absolute; transform:translate(-2px,-2px); display:flex; align-items:center; gap:4px; font-size:11px; font-weight:700; transition:left 0.06s linear,top 0.06s linear; }
+    .peer-tag { background:#111; color:#fff; padding:1px 6px; border-radius:999px; white-space:nowrap; }
 
-      .q-prompt {
-        font-size: 15.5px;
-        line-height: 1.55;
-        margin-bottom: 12px;
-        color: #111;
-      }
-      .q-choices {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 8px;
-      }
-      .choice-chip {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 7px 10px;
-        border: 1px solid #d1d5db;
-        border-radius: 8px;
-        background: #fff;
-        color: #111;
-        font-size: 14px;
-        text-align: left;
-      }
-      .choice-letter-hit {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 24px;
-        height: 24px;
-        border: 1px solid #111;
-        border-radius: 6px;
-        font-weight: 800;
-        font-size: 12px;
-        cursor: pointer;
-        flex-shrink: 0;
-        background: #fff;
-      }
-      .choice-letter-hit:hover {
-        background: #f3f4f6;
-      }
-      .choice-chip.selected {
-        border-color: #111;
-        background: #f3f4f6;
-      }
-      .choice-chip.selected .choice-letter-hit {
-        background: #111;
-        color: #fff;
-      }
-      .choice-chip.correct {
-        background: #dcfce7;
-        border-color: #16a34a;
-      }
-      .choice-chip.wrong {
-        background: #fee2e2;
-        border-color: #dc2626;
-      }
+    .pill { position:fixed; z-index:40; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); display:flex; align-items:center; gap:3px; padding:4px; }
+    .pill-left { top:10px; left:10px; padding:4px 6px; }
+    .toolbar-top { top:10px; left:50%; transform:translateX(-50%); max-width:calc(100vw - 520px); flex-wrap:wrap; justify-content:center; }
+    .pill-right { top:10px; right:10px; }
+    .pill-bottom-left { bottom:10px; left:10px; }
+    .pill-bottom-center { bottom:10px; left:50%; transform:translateX(-50%); padding:4px 9px; gap:6px; }
+    .pill-bottom-right { bottom:10px; right:10px; }
 
-      .gridin-row {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-      .gridin-input {
-        flex: 1;
-        padding: 8px 10px;
-        border: 1.5px solid #111;
-        border-radius: 8px;
-        font-size: 15px;
-        font-weight: 600;
-        outline: none;
-      }
+    .tbtn { display:inline-flex; align-items:center; justify-content:center; gap:4px; height:30px; padding:0 8px; border:none; border-radius:7px; background:transparent; color:var(--ink); font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
+    .tbtn:hover { background:#f3f4f6; }
+    .tbtn.active { background:#111; color:#fff; }
+    .tsep { width:1px; height:18px; background:var(--border); margin:0 2px; }
+    .cdot { width:17px; height:17px; border-radius:50%; border:1.5px solid #d1d5db; cursor:pointer; }
+    .cdot.active { outline:2px solid #111; outline-offset:2px; }
 
-      /* On-Board Widgets */
-      .board-widget {
-        position: absolute;
-        background: #fff;
-        border: 1.5px solid #111;
-        border-radius: 10px;
-        box-shadow: 0 6px 22px rgba(0, 0, 0, 0.09);
-        pointer-events: auto;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
-      .bw-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 6px;
-        padding: 5px 8px;
-        background: #f8f9fa;
-        border-bottom: 1px solid var(--border);
-        font-size: 11px;
-        font-weight: 800;
-        cursor: move;
-      }
-      .bw-head button {
-        border: none;
-        background: transparent;
-        color: #111;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 700;
-        padding: 1px 5px;
-        border-radius: 4px;
-      }
-      .bw-head button:hover {
-        background: #e5e7eb;
-      }
-      .bw-body {
-        flex: 1;
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-      }
-      .bw-resize {
-        position: absolute;
-        right: 0;
-        bottom: 0;
-        width: 15px;
-        height: 15px;
-        cursor: nwse-resize;
-        background: linear-gradient(135deg, transparent 50%, #111 50%);
-        opacity: 0.45;
-      }
-      .bw-resize:hover {
-        opacity: 1;
-      }
+    .zen-active .hide-in-zen { display:none !important; }
+    #exitZenBtn { display:none; position:fixed; top:10px; right:10px; z-index:60; }
+    .zen-active #exitZenBtn { display:flex; }
 
-      #boardCanvas {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        z-index: 15;
-        touch-action: none;
-      }
-      #boardCanvas.pass-through {
-        pointer-events: none;
-      }
+    .dropdown { position:relative; }
+    .dropdown-menu { position:absolute; top:calc(100% + 6px); left:0; background:#fff; border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); padding:5px; display:none; flex-direction:column; gap:2px; min-width:185px; z-index:70; }
+    .dropdown-menu.show { display:flex; }
+    .dropdown-menu button { text-align:left; border:none; background:transparent; color:var(--ink); padding:6px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; }
+    .dropdown-menu button:hover { background:#111; color:#fff; }
 
-      /* Live Peer Cursors Overlay */
-      #cursorsLayer {
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        z-index: 35;
-        overflow: hidden;
-      }
-      .peer-cursor {
-        position: absolute;
-        transform: translate(-2px, -2px);
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 11px;
-        font-weight: 700;
-        transition:
-          left 0.06s linear,
-          top 0.06s linear;
-      }
-      .peer-tag {
-        background: #111;
-        color: #fff;
-        padding: 1px 6px;
-        border-radius: 999px;
-        white-space: nowrap;
-      }
+    #textEditorBox { position:fixed; display:none; min-width:140px; min-height:36px; padding:4px 6px; font-family:Inter,sans-serif; font-size:19px; font-weight:600; color:#111; background:rgba(255,255,255,0.96); border:1.5px solid #111; border-radius:6px; outline:none; resize:both; z-index:55; }
+    .sym-bar { position:fixed; bottom:54px; left:50%; transform:translateX(-50%); background:#fff; border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); padding:5px 8px; display:none; gap:4px; flex-wrap:wrap; z-index:55; }
+    .sym-bar.show { display:flex; }
+    .sym-btn { border:1px solid var(--border); background:#f9fafb; color:#111; border-radius:6px; padding:4px 8px; font-size:13px; font-weight:600; cursor:pointer; }
+    .sym-btn:hover { background:#111; color:#fff; }
 
-      /* Floating Excalidraw Pills */
-      .pill {
-        position: fixed;
-        z-index: 40;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        box-shadow: var(--shadow);
-        display: flex;
-        align-items: center;
-        gap: 3px;
-        padding: 4px;
-      }
-      .pill-left {
-        top: 10px;
-        left: 10px;
-        padding: 4px 6px;
-      }
-      .toolbar-top {
-        top: 10px;
-        left: 50%;
-        transform: translateX(-50%);
-        max-width: calc(100vw - 520px);
-        flex-wrap: wrap;
-        justify-content: center;
-      }
-      .pill-right {
-        top: 10px;
-        right: 10px;
-      }
-      .pill-bottom-left {
-        bottom: 10px;
-        left: 10px;
-      }
-      .pill-bottom-center {
-        bottom: 10px;
-        left: 50%;
-        transform: translateX(-50%);
-        padding: 4px 9px;
-        gap: 6px;
-      }
-      .pill-bottom-right {
-        bottom: 10px;
-        right: 10px;
-      }
+    .side-drawer { position:fixed; top:52px; right:10px; bottom:52px; width:410px; max-width:calc(100vw - 20px); background:#fff; border:1.5px solid #111; border-radius:12px; box-shadow:0 14px 38px rgba(0,0,0,0.12); z-index:45; display:none; flex-direction:column; overflow:hidden; }
+    .side-drawer.show { display:flex; }
+    .drawer-head { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; border-bottom:1px solid var(--border); background:var(--soft); font-size:12px; font-weight:700; }
+    .drawer-body { flex:1; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:8px; user-select:text; }
+    .topic-chips { display:flex; gap:4px; flex-wrap:wrap; }
+    .chip-btn { border:1px solid var(--border); background:#fff; color:#111; border-radius:999px; padding:3px 9px; font-size:11px; font-weight:600; cursor:pointer; }
+    .chip-btn.active { background:#111; color:#fff; border-color:#111; }
+    .f-card { border:1px solid var(--border); border-radius:10px; padding:9px; display:grid; grid-template-columns:84px 1fr; gap:9px; align-items:center; background:#fff; }
+    .f-card-vis { width:84px; height:72px; border:1px solid #e5e7eb; border-radius:8px; display:flex; align-items:center; justify-content:center; background:#fafafa; }
+    .f-card-title { font-size:12px; font-weight:800; margin-bottom:2px; display:flex; justify-content:space-between; gap:4px; align-items:center; }
+    .f-card-math { font-size:13px; margin-bottom:3px; }
+    .f-card-note { font-size:11.5px; color:#374151; line-height:1.35; }
+    .f-card-trap { font-size:11px; color:#b91c1c; font-weight:600; margin-top:2px; }
+    .pin-mini-btn { border:1px solid #d1d5db; background:#f9fafb; color:#111; font-size:10px; font-weight:700; padding:2px 6px; border-radius:5px; cursor:pointer; }
+    .pin-mini-btn:hover { background:#111; color:#fff; border-color:#111; }
+    .q-list-item { border:1px solid var(--border); border-radius:8px; padding:8px 10px; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; }
+    .q-list-item:hover { border-color:#111; }
+    .q-list-item.active { background:#111; color:#fff; border-color:#111; }
 
-      .tbtn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 4px;
-        height: 30px;
-        padding: 0 8px;
-        border: none;
-        border-radius: 7px;
-        background: transparent;
-        color: var(--ink);
-        font-size: 12px;
-        font-weight: 600;
-        cursor: pointer;
-        white-space: nowrap;
-      }
-      .tbtn:hover {
-        background: #f3f4f6;
-      }
-      .tbtn.active {
-        background: #111111;
-        color: #ffffff;
-      }
-      .tsep {
-        width: 1px;
-        height: 18px;
-        background: var(--border);
-        margin: 0 2px;
-      }
-      .cdot {
-        width: 17px;
-        height: 17px;
-        border-radius: 50%;
-        border: 1.5px solid #d1d5db;
-        cursor: pointer;
-      }
-      .cdot.active {
-        outline: 2px solid #111111;
-        outline-offset: 2px;
-      }
+    .peek-window { position:fixed; top:64px; left:16px; width:460px; height:330px; min-width:260px; min-height:190px; background:#fff; border:1.5px solid #111; border-radius:10px; box-shadow:0 18px 45px rgba(0,0,0,0.18); z-index:65; display:none; flex-direction:column; resize:both; overflow:hidden; }
+    .peek-window.show { display:flex; }
+    .peek-head { display:flex; align-items:center; justify-content:space-between; gap:4px; padding:5px 8px; background:#f8f9fa; border-bottom:1px solid var(--border); cursor:move; font-size:11px; font-weight:700; }
+    .peek-viewport { flex:1; position:relative; overflow:hidden; cursor:grab; background:#fff; }
+    .peek-viewport img { position:absolute; top:0; left:0; transform-origin:0 0; pointer-events:none; }
 
-      .zen-active .hide-in-zen {
-        display: none !important;
-      }
-      #exitZenBtn {
-        display: none;
-        position: fixed;
-        top: 10px;
-        right: 10px;
-        z-index: 60;
-      }
-      .zen-active #exitZenBtn {
-        display: flex;
-      }
+    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.35); display:none; align-items:center; justify-content:center; z-index:95; padding:16px; }
+    .modal-backdrop.show { display:flex; }
+    .modal { background:#fff; border:1.5px solid #111; border-radius:12px; width:100%; max-width:660px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,0.22); }
+    .modal-head { padding:10px 14px; border-bottom:1px solid var(--border); background:var(--soft); display:flex; align-items:center; justify-content:space-between; font-size:14px; font-weight:800; }
+    .modal-body { padding:14px; overflow-y:auto; display:flex; flex-direction:column; gap:14px; user-select:text; font-size:13px; }
+    .set-section { border:1px solid var(--border); border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
+    .set-section h4 { margin:0 0 2px 0; font-size:12px; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); }
+    .set-row { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .set-input { padding:5px 8px; border:1px solid #d1d5db; border-radius:6px; font-size:12px; background:#fff; color:#111; }
+    .keybind-btn { min-width:78px; padding:4px 8px; border:1px solid #111; border-radius:6px; background:#f8f9fa; font-size:11px; font-weight:700; cursor:pointer; }
+    .keybind-btn.listening { background:#111; color:#fff; }
+    .toast { position:fixed; bottom:54px; right:16px; background:#111; color:#fff; padding:7px 12px; border-radius:8px; font-size:12px; font-weight:600; z-index:120; display:none; }
+    .toast.show { display:block; }
+    @media (max-width:1100px) { .toolbar-top { top:50px; max-width:calc(100vw - 20px); } }
+  </style>
+</head>
+<body>
 
-      .dropdown {
-        position: relative;
-      }
-      .dropdown-menu {
-        position: absolute;
-        top: calc(100% + 6px);
-        left: 0;
-        background: #fff;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        box-shadow: var(--shadow);
-        padding: 5px;
-        display: none;
-        flex-direction: column;
-        gap: 2px;
-        min-width: 185px;
-        z-index: 70;
-      }
-      .dropdown-menu.show {
-        display: flex;
-      }
-      .dropdown-menu button {
-        text-align: left;
-        border: none;
-        background: transparent;
-        color: var(--ink);
-        padding: 6px 10px;
-        border-radius: 6px;
-        font-size: 12px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      .dropdown-menu button:hover {
-        background: #111;
-        color: #fff;
-      }
-
-      /* Text Editor */
-      #textEditorBox {
-        position: fixed;
-        display: none;
-        min-width: 140px;
-        min-height: 36px;
-        padding: 4px 6px;
-        font-family: Inter, sans-serif;
-        font-size: 19px;
-        font-weight: 600;
-        color: #111;
-        background: rgba(255, 255, 255, 0.96);
-        border: 1.5px solid #111;
-        border-radius: 6px;
-        outline: none;
-        resize: both;
-        z-index: 55;
-      }
-      .sym-bar {
-        position: fixed;
-        bottom: 54px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: #fff;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        box-shadow: var(--shadow);
-        padding: 5px 8px;
-        display: none;
-        gap: 4px;
-        flex-wrap: wrap;
-        z-index: 55;
-      }
-      .sym-bar.show {
-        display: flex;
-      }
-      .sym-btn {
-        border: 1px solid var(--border);
-        background: #f9fafb;
-        color: #111;
-        border-radius: 6px;
-        padding: 4px 8px;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      .sym-btn:hover {
-        background: #111;
-        color: #fff;
-      }
-
-      /* Side Drawer */
-      .side-drawer {
-        position: fixed;
-        top: 52px;
-        right: 10px;
-        bottom: 52px;
-        width: 410px;
-        max-width: calc(100vw - 20px);
-        background: #fff;
-        border: 1.5px solid #111;
-        border-radius: 12px;
-        box-shadow: 0 14px 38px rgba(0, 0, 0, 0.12);
-        z-index: 45;
-        display: none;
-        flex-direction: column;
-        overflow: hidden;
-      }
-      .side-drawer.show {
-        display: flex;
-      }
-      .drawer-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 8px 12px;
-        border-bottom: 1px solid var(--border);
-        background: var(--soft);
-        font-size: 12px;
-        font-weight: 700;
-      }
-      .drawer-body {
-        flex: 1;
-        overflow-y: auto;
-        padding: 10px 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        user-select: text;
-      }
-
-      .topic-chips {
-        display: flex;
-        gap: 4px;
-        flex-wrap: wrap;
-      }
-      .chip-btn {
-        border: 1px solid var(--border);
-        background: #fff;
-        color: #111;
-        border-radius: 999px;
-        padding: 3px 9px;
-        font-size: 11px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      .chip-btn.active {
-        background: #111;
-        color: #fff;
-        border-color: #111;
-      }
-
-      .f-card {
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 9px;
-        display: grid;
-        grid-template-columns: 84px 1fr;
-        gap: 9px;
-        align-items: center;
-        background: #fff;
-      }
-      .f-card-vis {
-        width: 84px;
-        height: 72px;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: #fafafa;
-      }
-      .f-card-title {
-        font-size: 12px;
-        font-weight: 800;
-        margin-bottom: 2px;
-        display: flex;
-        justify-content: space-between;
-        gap: 4px;
-        align-items: center;
-      }
-      .f-card-math {
-        font-size: 13px;
-        margin-bottom: 3px;
-      }
-      .f-card-note {
-        font-size: 11.5px;
-        color: #374151;
-        line-height: 1.35;
-      }
-      .f-card-trap {
-        font-size: 11px;
-        color: #b91c1c;
-        font-weight: 600;
-        margin-top: 2px;
-      }
-      .pin-mini-btn {
-        border: 1px solid #d1d5db;
-        background: #f9fafb;
-        color: #111;
-        font-size: 10px;
-        font-weight: 700;
-        padding: 2px 6px;
-        border-radius: 5px;
-        cursor: pointer;
-      }
-      .pin-mini-btn:hover {
-        background: #111;
-        color: #fff;
-        border-color: #111;
-      }
-
-      /* Question Browser Grid */
-      .q-list-item {
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 8px 10px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        font-size: 12px;
-      }
-      .q-list-item:hover {
-        border-color: #111;
-      }
-      .q-list-item.active {
-        background: #111;
-        color: #fff;
-        border-color: #111;
-      }
-
-      /* Peek Window */
-      .peek-window {
-        position: fixed;
-        top: 64px;
-        left: 16px;
-        width: 460px;
-        height: 330px;
-        min-width: 260px;
-        min-height: 190px;
-        background: #fff;
-        border: 1.5px solid #111;
-        border-radius: 10px;
-        box-shadow: 0 18px 45px rgba(0, 0, 0, 0.18);
-        z-index: 65;
-        display: none;
-        flex-direction: column;
-        resize: both;
-        overflow: hidden;
-      }
-      .peek-window.show {
-        display: flex;
-      }
-      .peek-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 4px;
-        padding: 5px 8px;
-        background: #f8f9fa;
-        border-bottom: 1px solid var(--border);
-        cursor: move;
-        font-size: 11px;
-        font-weight: 700;
-      }
-      .peek-viewport {
-        flex: 1;
-        position: relative;
-        overflow: hidden;
-        cursor: grab;
-        background: #fff;
-      }
-      .peek-viewport img {
-        position: absolute;
-        top: 0;
-        left: 0;
-        transform-origin: 0 0;
-        pointer-events: none;
-      }
-
-      /* Modals (Settings & Room) */
-      .modal-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.35);
-        display: none;
-        align-items: center;
-        justify-content: center;
-        z-index: 95;
-        padding: 16px;
-      }
-      .modal-backdrop.show {
-        display: flex;
-      }
-      .modal {
-        background: #fff;
-        border: 1.5px solid #111;
-        border-radius: 12px;
-        width: 100%;
-        max-width: 660px;
-        max-height: 85vh;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
-      }
-      .modal-head {
-        padding: 10px 14px;
-        border-bottom: 1px solid var(--border);
-        background: var(--soft);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        font-size: 14px;
-        font-weight: 800;
-      }
-      .modal-body {
-        padding: 14px;
-        overflow-y: auto;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-        user-select: text;
-        font-size: 13px;
-      }
-      .set-section {
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .set-section h4 {
-        margin: 0 0 2px 0;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: var(--muted);
-      }
-      .set-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-      .set-input {
-        padding: 5px 8px;
-        border: 1px solid #d1d5db;
-        border-radius: 6px;
-        font-size: 12px;
-        background: #fff;
-        color: #111;
-      }
-      .keybind-btn {
-        min-width: 78px;
-        padding: 4px 8px;
-        border: 1px solid #111;
-        border-radius: 6px;
-        background: #f8f9fa;
-        font-size: 11px;
-        font-weight: 700;
-        cursor: pointer;
-      }
-      .keybind-btn.listening {
-        background: #111;
-        color: #fff;
-      }
-
-      .toast {
-        position: fixed;
-        bottom: 54px;
-        right: 16px;
-        background: #111;
-        color: #fff;
-        padding: 7px 12px;
-        border-radius: 8px;
-        font-size: 12px;
-        font-weight: 600;
-        z-index: 120;
-        display: none;
-      }
-      .toast.show {
-        display: block;
-      }
-
-      @media (max-width: 1100px) {
-        .toolbar-top {
-          top: 50px;
-          max-width: calc(100vw - 20px);
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="board-stage grid-dot" id="boardStage">
-      <div class="world-layer" id="worldLayer">
-        <div class="question-card" id="questionCard">
-          <div class="q-meta">
-            <span id="qMetaLabel">Topic · Difficulty</span>
-            <div style="display:flex;gap:10px;align-items:center;">
-              <span
-                id="starQuestionBtn"
-                style="cursor:pointer;font-size:13px;"
-                title="Mark for Review"
-                >☆</span
-              >
-              <span
-                id="checkStatusChip"
-                style="cursor:pointer;color:#111;text-decoration:underline;"
-                >Check Answer</span
-              >
-            </div>
-          </div>
-
-          <div class="q-diagram-wrap" id="qDiagramWrap">
-            <div class="q-diagram-bar hide-in-zen">
-              <span>Diagram</span>
-              <button id="diagMinusBtn">−</button>
-              <span
-                id="diagScaleText"
-                style="min-width:34px;text-align:center;font-weight:700;"
-                >100%</span
-              >
-              <button id="diagPlusBtn">+</button>
-              <button id="diagResetBtn">1:1</button>
-            </div>
-            <div class="q-diagram-box" id="diagramBox"></div>
-          </div>
-
-          <div class="q-prompt" id="qPrompt"></div>
-          <div class="q-choices" id="qChoices"></div>
-          <div class="gridin-row" id="qGridIn" style="display:none;">
-            <input
-              type="text"
-              class="gridin-input"
-              id="gridInField"
-              placeholder="Type number or fraction (e.g. 12 or 3/4)"
-            />
-          </div>
+<div class="board-stage grid-dot" id="boardStage">
+  <div class="world-layer" id="worldLayer">
+    <div class="question-card" id="questionCard">
+      <div class="q-meta">
+        <span id="qMetaLabel">Topic · Difficulty</span>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <span id="starQuestionBtn" style="cursor:pointer;font-size:13px;" title="Mark for Review">☆</span>
+          <span id="checkStatusChip" style="cursor:pointer;color:#111;text-decoration:underline;">Check Answer</span>
         </div>
       </div>
-
-      <canvas id="boardCanvas"></canvas>
-      <div id="cursorsLayer"></div>
-    </div>
-
-    <!-- TOP LEFT: QUESTION NAV + ROOM + ZEN -->
-    <div class="pill pill-left hide-in-zen">
-      <button class="tbtn" id="prevQBtn" title="Previous question">◀</button>
-      <button class="tbtn" id="openQuestionsBtn" title="Browse all 9 topics">
-        📚 <span id="qNavText">1 / 27</span> ▾
-      </button>
-      <button class="tbtn" id="nextQBtn" title="Next question">▶</button>
-      <span class="tsep"></span>
-      <button
-        class="tbtn"
-        id="openRoomBtn"
-        title="Live Multiplayer Room (Supabase)"
-      >
-        🌐 <span id="roomBadgeText">Room</span>
-      </button>
-      <button class="tbtn" id="zenBtn" title="Zen / Screen-Share Mode">
-        👁️ Zen
-      </button>
-    </div>
-    <button
-      class="pill tbtn"
-      id="exitZenBtn"
-      style="padding:6px 12px;border:1px solid #111;"
-    >
-      ✕ Exit Zen
-    </button>
-
-    <!-- TOP CENTER: TOOLS -->
-    <div class="pill toolbar-top" id="mainToolbar">
-      <button class="tbtn" data-tool="cursor" title="Cursor (1)">
-        🖱️ Cursor
-      </button>
-      <button
-        class="tbtn"
-        data-tool="select"
-        title="Select / Move Drawings (V)"
-      >
-        ⬚ Select
-      </button>
-      <span class="tsep"></span>
-      <button class="tbtn active" data-tool="pen" title="Pen (P)">
-        ✏️ Pen
-      </button>
-      <button class="tbtn" data-tool="highlighter" title="Highlighter (H)">
-        🖍️ High
-      </button>
-      <button class="tbtn" data-tool="laser" title="Laser Pointer (L)">
-        🔴 Laser
-      </button>
-      <button class="tbtn" data-tool="eraser" title="Stroke Eraser (E)">
-        🧽 Erase
-      </button>
-      <span class="tsep"></span>
-      <div class="dropdown">
-        <button class="tbtn" id="shapesBtn">📐 Shapes ▾</button>
-        <div class="dropdown-menu" id="shapesMenu">
-          <button data-shape="line">╱ Line (drag)</button>
-          <button data-shape="dashed">┄ Dashed Line (drag)</button>
-          <button data-shape="circle">◯ Circle + Center (drag)</button>
-          <button data-shape="rightTriangle">
-            ⊿ Right Triangle 90° (drag)
-          </button>
-          <button data-shape="isoTriangle">△ Triangle (drag)</button>
-          <button data-stamp="306090">Stamp: 30-60-90</button>
-          <button data-stamp="454590">Stamp: 45-45-90</button>
-          <button data-stamp="axes">Stamp: x-y Axes</button>
+      <div class="q-diagram-wrap" id="qDiagramWrap">
+        <div class="q-diagram-bar hide-in-zen">
+          <span>Diagram</span>
+          <button id="diagMinusBtn">−</button>
+          <span id="diagScaleText" style="min-width:34px;text-align:center;font-weight:700;">100%</span>
+          <button id="diagPlusBtn">+</button>
+          <button id="diagResetBtn">1:1</button>
         </div>
+        <div class="q-diagram-box" id="diagramBox"></div>
       </div>
-      <button class="tbtn active" id="snapBtn" title="Snap rough shapes">
-        ✨ Snap
-      </button>
-      <button class="tbtn" data-tool="text" title="Text (T)">T Text</button>
-    </div>
-
-    <!-- TOP RIGHT: TABS + SETTINGS -->
-    <div class="pill pill-right hide-in-zen">
-      <button class="tbtn" id="tabFormulasBtn" title="Formulas (F)">
-        📐 Formulas
-      </button>
-      <button class="tbtn" id="tabDesmosBtn" title="Desmos on Board (G)">
-        📈 Desmos
-      </button>
-      <button class="tbtn" id="tabPhotosBtn" title="Photos / Ctrl+V (D)">
-        🖼️ Photos (<span id="photoCount">0</span>)
-      </button>
-      <span class="tsep"></span>
-      <button class="tbtn" id="exportPngBtn" title="Export Board as PNG">
-        🖼️ PNG
-      </button>
-      <button class="tbtn" id="openSettingsBtn" title="Settings">⚙️</button>
-    </div>
-
-    <!-- BOTTOM LEFT -->
-    <div class="pill pill-bottom-left hide-in-zen">
-      <button class="tbtn" id="boardZoomOut">−</button>
-      <button class="tbtn" id="boardZoomReset" title="Center View">100%</button>
-      <button class="tbtn" id="boardZoomIn">+</button>
-      <span class="tsep"></span>
-      <button class="tbtn" id="undoBtn" title="Ctrl+Z">↩</button>
-      <button class="tbtn" id="redoBtn" title="Ctrl+Y">↪</button>
-      <button class="tbtn" id="gridBtn" title="Grid">▦</button>
-      <button class="tbtn" id="clearAllBtn" title="Clear ink">🗑️</button>
-    </div>
-
-    <!-- BOTTOM CENTER -->
-    <div class="pill pill-bottom-center" id="inkStyleBar">
-      <div
-        id="colorPaletteMount"
-        style="display:flex;gap:5px;align-items:center;"
-      ></div>
-      <span class="tsep"></span>
-      <button class="tbtn" data-width="2">Thin</button>
-      <button class="tbtn active" data-width="3.5">Med</button>
-      <button class="tbtn" data-width="6">Bold</button>
-      <span class="tsep"></span>
-      <span id="panHintText" style="font-size:11px;color:#6b7280;padding:0 3px;"
-        >Right-drag: Pan</span
-      >
-    </div>
-
-    <!-- BOTTOM RIGHT: PACK -->
-    <div class="pill pill-bottom-right hide-in-zen">
-      <button
-        class="tbtn"
-        id="soloModeBtn"
-        title="Hide spoilers for solo study"
-      >
-        🧑‍🎓 Solo: OFF
-      </button>
-      <button class="tbtn" id="exportBtn" title="Export JSON pack">💾</button>
-      <button class="tbtn" id="importBtn" title="Import JSON pack">📂</button>
-      <input type="file" id="importInput" accept=".json" hidden />
-    </div>
-
-    <!-- TEXT EDITOR -->
-    <textarea id="textEditorBox" rows="2" placeholder="Type..."></textarea>
-    <div class="sym-bar" id="symBar">
-      <button class="sym-btn" data-sym="π">π</button>
-      <button class="sym-btn" data-sym="√(">√</button>
-      <button class="sym-btn" data-sym="²">²</button>
-      <button class="sym-btn" data-sym="°">°</button>
-      <button class="sym-btn" data-sym="θ">θ</button>
-      <button class="sym-btn" data-sym="∠">∠</button>
-      <button class="sym-btn" data-sym="△">△</button>
-      <button class="sym-btn" data-sym="⊥">⊥</button>
-      <button class="sym-btn" data-sym="∥">∥</button>
-      <button class="sym-btn" data-sym="≅">≅</button>
-      <button class="sym-btn" data-sym="∼">∼</button>
-      <button class="sym-btn" data-sym="≤">≤</button>
-      <button class="sym-btn" data-sym="≥">≥</button>
-      <button class="sym-btn" data-sym="≠">≠</button>
-      <button class="tbtn active" id="doneTextBtn">✓ Place</button>
-    </div>
-
-    <!-- SIDE DRAWER (QUESTIONS / FORMULAS / DESMOS / PHOTOS) -->
-    <aside class="side-drawer" id="sideDrawer">
-      <div class="drawer-head">
-        <div style="display:flex;gap:3px;">
-          <button class="tbtn" id="subTabQuestions">Questions</button>
-          <button class="tbtn active" id="subTabFormulas">Formulas</button>
-          <button class="tbtn" id="subTabDesmos">Desmos</button>
-          <button class="tbtn" id="subTabPhotos">Photos</button>
-        </div>
-        <button class="tbtn" id="closeDrawerBtn">✕</button>
-      </div>
-
-      <!-- QUESTIONS BROWSER -->
-      <div class="drawer-body" id="viewQuestions" style="display:none;">
-        <select
-          id="topicSelect"
-          class="set-input"
-          style="width:100%;font-weight:700;"
-        ></select>
-        <div class="topic-chips" id="diffChips">
-          <button class="chip-btn active" data-diff="all">All</button>
-          <button class="chip-btn" data-diff="easy">Easy</button>
-          <button class="chip-btn" data-diff="medium">Medium</button>
-          <button class="chip-btn" data-diff="hard">Hard</button>
-          <button class="chip-btn" data-diff="starred">☆ Starred</button>
-        </div>
-        <div style="font-size:11px;color:#6b7280;">
-          Tip: Press <strong>Ctrl+V</strong> with any screenshot to solve a
-          custom question on the board.
-        </div>
-        <div
-          id="questionList"
-          style="display:flex;flex-direction:column;gap:6px;"
-        ></div>
-      </div>
-
-      <!-- FORMULAS -->
-      <div class="drawer-body" id="viewFormulas">
-        <input
-          type="text"
-          id="formulaSearch"
-          placeholder="Search formula (arc, slope, vertex, sd...)"
-          class="set-input"
-        />
-        <div class="topic-chips" id="topicChips">
-          <button class="chip-btn active" data-topic="task">This Task</button>
-          <button class="chip-btn" data-topic="all">All</button>
-          <button class="chip-btn" data-topic="circles">Circles</button>
-          <button class="chip-btn" data-topic="triangles">Triangles</button>
-          <button class="chip-btn" data-topic="trig">Trig</button>
-          <button class="chip-btn" data-topic="algebra">Algebra</button>
-          <button class="chip-btn" data-topic="quadratics">Quadratics</button>
-          <button class="chip-btn" data-topic="percent">Percent/Rates</button>
-          <button class="chip-btn" data-topic="volume">3D Volume</button>
-          <button class="chip-btn" data-topic="data">Data/Prob</button>
-        </div>
-        <div
-          id="formulaList"
-          style="display:flex;flex-direction:column;gap:8px;"
-        ></div>
-      </div>
-
-      <!-- DESMOS -->
-      <div class="drawer-body" id="viewDesmos" style="display:none;">
-        <div style="font-size:12px;color:#374151;line-height:1.45;">
-          Live Desmos lives <strong>directly on the whiteboard</strong>. Drag
-          its bar, resize corner, or type inside it immediately.
-        </div>
-        <button
-          class="tbtn active"
-          id="spawnDesmosOnBoardBtn"
-          style="height:34px;"
-        >
-          + Put Live Desmos on Board
-        </button>
-        <button
-          class="tbtn"
-          id="desmosRegPresetBtn"
-          style="border:1px solid #e5e7eb;height:32px;"
-        >
-          📊 Add Empty Regression Table
-        </button>
-        <button
-          class="tbtn"
-          id="snapDesmosBtn"
-          style="border:1px solid #e5e7eb;height:32px;"
-        >
-          📸 Snapshot Desmos as Drawable Image
-        </button>
-        <button
-          class="tbtn"
-          id="saveDesmosBtn"
-          style="border:1px solid #e5e7eb;height:32px;"
-        >
-          💾 Save Desmos Graph to Question
-        </button>
-      </div>
-
-      <!-- PHOTOS -->
-      <div class="drawer-body" id="viewPhotos" style="display:none;">
-        <div
-          style="display:flex;align-items:center;justify-content:space-between;gap:6px;"
-        >
-          <span style="font-size:12px;color:#374151;"
-            >Press <strong>Ctrl+V</strong> to drop Desmos photo on board.</span
-          >
-          <button class="tbtn active" id="uploadPhotoBtn">+ Upload</button>
-          <input
-            type="file"
-            id="uploadPhotoInput"
-            accept="image/*"
-            multiple
-            hidden
-          />
-        </div>
-        <button
-          class="tbtn"
-          id="revealSoloPhotosBtn"
-          style="display:none;border:1px solid #111;"
-        >
-          👁️ Reveal Photos (Solo Mode)
-        </button>
-        <div
-          id="photoList"
-          style="display:flex;flex-direction:column;gap:8px;"
-        ></div>
-      </div>
-    </aside>
-
-    <!-- FLOATING PEEK -->
-    <div class="peek-window" id="peekWindow">
-      <div class="peek-head" id="peekDrag">
-        <span>Desmos Photo (<span id="peekIdxText">1/1</span>)</span>
-        <div style="display:flex;gap:3px;align-items:center;">
-          <button
-            class="tbtn"
-            style="height:24px;padding:0 6px;"
-            id="peekFocusExpr"
-          >
-            Expr
-          </button>
-          <button
-            class="tbtn"
-            style="height:24px;padding:0 6px;"
-            id="peekFocusGraph"
-          >
-            Graph
-          </button>
-          <button
-            class="tbtn"
-            style="height:24px;padding:0 6px;"
-            id="peekReset"
-          >
-            1:1
-          </button>
-          <input
-            type="range"
-            id="peekOpacity"
-            min="35"
-            max="100"
-            value="100"
-            style="width:46px;"
-          />
-          <button
-            class="tbtn active"
-            style="height:24px;padding:0 7px;"
-            id="peekPin"
-          >
-            📌 Board
-          </button>
-          <button
-            class="tbtn"
-            style="height:24px;padding:0 6px;"
-            id="peekClose"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
-      <div class="peek-viewport" id="peekViewport">
-        <img id="peekImg" alt="Desmos" />
+      <div class="q-prompt" id="qPrompt"></div>
+      <div class="q-choices" id="qChoices"></div>
+      <div class="gridin-row" id="qGridIn" style="display:none;">
+        <input type="text" class="gridin-input" id="gridInField" placeholder="Type number or fraction (e.g. 12 or 3/4)" />
       </div>
     </div>
+  </div>
+  <canvas id="boardCanvas"></canvas>
+  <div id="cursorsLayer"></div>
+</div>
 
-    <!-- SETTINGS MODAL (RELIABLE & CUSTOMIZABLE) -->
-    <div class="modal-backdrop" id="settingsBackdrop">
-      <div class="modal">
-        <div class="modal-head">
-          <span>⚙️ Settings (Saved Automatically)</span>
-          <button class="tbtn" id="closeSettingsBtn">✕</button>
-        </div>
-        <div class="modal-body" id="settingsBody">
-          <div class="set-section">
-            <h4>Controls &amp; Interaction</h4>
-            <div class="set-row">
-              <span
-                >Smart Pass-Through (click Desmos/widgets/choices without
-                switching to Cursor)</span
-              >
-              <input type="checkbox" id="setSmartPass" />
-            </div>
-            <div class="set-row">
-              <span>Pan Mouse Button</span>
-              <select id="setPanButton" class="set-input">
-                <option value="2">Right-Click Drag</option>
-                <option value="1">Middle-Click Drag</option>
-              </select>
-            </div>
-            <div class="set-row">
-              <span>Mouse Wheel Behavior</span>
-              <select id="setWheelMode" class="set-input">
-                <option value="ctrlZoom">
-                  Ctrl + Wheel = Zoom (Wheel = Pan)
-                </option>
-                <option value="alwaysZoom">Wheel = Zoom Always</option>
-              </select>
-            </div>
-            <div class="set-row">
-              <span>Stylus Mode (Pen draws, Touch pans)</span>
-              <input type="checkbox" id="setStylusOnly" />
-            </div>
-          </div>
+<div class="pill pill-left hide-in-zen">
+  <button class="tbtn" id="prevQBtn">◀</button>
+  <button class="tbtn" id="openQuestionsBtn">📚 <span id="qNavText">1 / 1</span> ▾</button>
+  <button class="tbtn" id="nextQBtn">▶</button>
+  <span class="tsep"></span>
+  <button class="tbtn" id="openRoomBtn">🌐 <span id="roomBadgeText">Room</span></button>
+  <button class="tbtn" id="zenBtn">👁️ Zen</button>
+</div>
+<button class="pill tbtn" id="exitZenBtn" style="padding:6px 12px;border:1px solid #111;">✕ Exit Zen</button>
 
-          <div class="set-section">
-            <h4>Whiteboard &amp; Tool Defaults</h4>
-            <div class="set-row">
-              <span>Default Tool</span>
-              <select id="setDefaultTool" class="set-input">
-                <option value="pen">Pen</option>
-                <option value="cursor">Cursor</option>
-                <option value="select">Select</option>
-              </select>
-            </div>
-            <div class="set-row">
-              <span>Default Grid</span>
-              <select id="setDefaultGrid" class="set-input">
-                <option value="grid-dot">Dot Grid</option>
-                <option value="grid-square">Square Grid</option>
-                <option value="grid-none">Blank</option>
-              </select>
-            </div>
-            <div class="set-row">
-              <span
-                >Shape Snap Hold Delay (<span id="snapDelayLabel">400</span>
-                ms)</span
-              >
-              <input
-                type="range"
-                id="setSnapDelay"
-                min="200"
-                max="800"
-                step="50"
-              />
-            </div>
-            <div class="set-row">
-              <span
-                >Laser Fade Duration (<span id="laserFadeLabel">1300</span>
-                ms)</span
-              >
-              <input
-                type="range"
-                id="setLaserFade"
-                min="500"
-                max="3000"
-                step="100"
-              />
-            </div>
-            <div class="set-row">
-              <span>Text Size (<span id="textSizeLabel">19</span> px)</span>
-              <input type="range" id="setTextSize" min="14" max="32" step="1" />
-            </div>
-            <div class="set-row">
-              <span>Custom 5 Ink Colors</span>
-              <div id="setColorsMount" style="display:flex;gap:6px;"></div>
-            </div>
-          </div>
+<div class="pill toolbar-top" id="mainToolbar">
+  <button class="tbtn" data-tool="cursor" title="Cursor (1)">🖱️ Cursor</button>
+  <button class="tbtn" data-tool="select" title="Select (V)">⬚ Select</button>
+  <span class="tsep"></span>
+  <button class="tbtn active" data-tool="pen" title="Pen (P)">✏️ Pen</button>
+  <button class="tbtn" data-tool="highlighter" title="Highlighter (H)">🖍️ High</button>
+  <button class="tbtn" data-tool="laser" title="Laser (L)">🔴 Laser</button>
+  <button class="tbtn" data-tool="eraser" title="Stroke Eraser (E)">🧽 Erase</button>
+  <span class="tsep"></span>
+  <div class="dropdown">
+    <button class="tbtn" id="shapesBtn">📐 Shapes ▾</button>
+    <div class="dropdown-menu" id="shapesMenu">
+      <button data-shape="line">╱ Line (drag)</button>
+      <button data-shape="dashed">┄ Dashed Line (drag)</button>
+      <button data-shape="circle">◯ Circle + Center (drag)</button>
+      <button data-shape="rightTriangle">⊿ Right Triangle 90° (drag)</button>
+      <button data-shape="isoTriangle">△ Triangle (drag)</button>
+      <button data-stamp="306090">Stamp: 30-60-90</button>
+      <button data-stamp="454590">Stamp: 45-45-90</button>
+      <button data-stamp="axes">Stamp: x-y Axes</button>
+    </div>
+  </div>
+  <button class="tbtn active" id="snapBtn">✨ Snap</button>
+  <button class="tbtn" data-tool="text" title="Text (T)">T Text</button>
+</div>
 
-          <div class="set-section">
-            <h4>Desmos &amp; Study</h4>
-            <div class="set-row">
-              <span>Desmos Default Angles</span>
-              <select id="setDesmosAngles" class="set-input">
-                <option value="deg">Degrees (SAT Default)</option>
-                <option value="rad">Radians</option>
-              </select>
-            </div>
-            <div class="set-row">
-              <span>Auto Desmos Projector Mode in Zen</span>
-              <input type="checkbox" id="setZenProj" />
-            </div>
-            <div class="set-row">
-              <span>Ctrl+V Image Action</span>
-              <select id="setPasteTarget" class="set-input">
-                <option value="desmos">Add as Desmos Photo on Board</option>
-                <option value="question">
-                  Replace Center Question Image (Custom Q)
-                </option>
-              </select>
-            </div>
-          </div>
+<div class="pill pill-right hide-in-zen">
+  <button class="tbtn" id="tabFormulasBtn">📐 Formulas</button>
+  <button class="tbtn" id="tabDesmosBtn">📈 Desmos</button>
+  <button class="tbtn" id="tabPhotosBtn">🖼️ Photos (<span id="photoCount">0</span>)</button>
+  <span class="tsep"></span>
+  <button class="tbtn" id="exportPngBtn">🖼️ PNG</button>
+  <button class="tbtn" id="openSettingsBtn">⚙️</button>
+</div>
 
-          <div class="set-section">
-            <h4>Keyboard Shortcuts (Works on Russian / English Layouts)</h4>
-            <div
-              id="keybindsMount"
-              style="display:grid;grid-template-columns:1fr 1fr;gap:6px;"
-            ></div>
-          </div>
+<div class="pill pill-bottom-left hide-in-zen">
+  <button class="tbtn" id="boardZoomOut">−</button>
+  <button class="tbtn" id="boardZoomReset">100%</button>
+  <button class="tbtn" id="boardZoomIn">+</button>
+  <span class="tsep"></span>
+  <button class="tbtn" id="undoBtn">↩</button>
+  <button class="tbtn" id="redoBtn">↪</button>
+  <button class="tbtn" id="gridBtn">▦</button>
+  <button class="tbtn" id="clearAllBtn">🗑️</button>
+</div>
 
-          <div class="set-section">
-            <h4>Supabase Cloud &amp; Multiplayer</h4>
-            <div class="set-row">
-              <span>Supabase URL</span>
-              <input
-                type="text"
-                id="setSbUrl"
-                class="set-input"
-                style="width:320px;"
-                placeholder="https://xxxx.supabase.co"
-              />
-            </div>
-            <div class="set-row">
-              <span>Supabase Anon / Publishable Key</span>
-              <input
-                type="password"
-                id="setSbKey"
-                class="set-input"
-                style="width:320px;"
-                placeholder="eyJ... or sb_publishable_..."
-              />
-            </div>
-            <div class="set-row">
-              <button class="tbtn active" id="testSbBtn">
-                Test &amp; Connect Supabase
-              </button>
-              <span id="sbStatusText" style="font-size:11px;color:var(--muted);"
-                >Local mode (IndexedDB)</span
-              >
-            </div>
-          </div>
+<div class="pill pill-bottom-center" id="inkStyleBar">
+  <div id="colorPaletteMount" style="display:flex;gap:5px;align-items:center;"></div>
+  <span class="tsep"></span>
+  <button class="tbtn" data-width="2">Thin</button>
+  <button class="tbtn active" data-width="3.5">Med</button>
+  <button class="tbtn" data-width="6">Bold</button>
+  <span class="tsep"></span>
+  <span id="panHintText" style="font-size:11px;color:#6b7280;padding:0 3px;">Right-drag: Pan</span>
+</div>
 
-          <div class="set-row" style="justify-content:flex-end;">
-            <button
-              class="tbtn"
-              id="resetSettingsBtn"
-              style="border:1px solid #dc2626;color:#dc2626;"
-            >
-              Reset All Settings
-            </button>
-          </div>
-        </div>
+<div class="pill pill-bottom-right hide-in-zen">
+  <button class="tbtn" id="soloModeBtn">🧑‍🎓 Solo: OFF</button>
+  <button class="tbtn" id="exportBtn">💾</button>
+  <button class="tbtn" id="importBtn">📂</button>
+  <input type="file" id="importInput" accept=".json" hidden />
+</div>
+
+<textarea id="textEditorBox" rows="2" placeholder="Type..."></textarea>
+<div class="sym-bar" id="symBar">
+  <button class="sym-btn" data-sym="π">π</button><button class="sym-btn" data-sym="√(">√</button><button class="sym-btn" data-sym="²">²</button>
+  <button class="sym-btn" data-sym="°">°</button><button class="sym-btn" data-sym="θ">θ</button><button class="sym-btn" data-sym="∠">∠</button>
+  <button class="sym-btn" data-sym="△">△</button><button class="sym-btn" data-sym="⊥">⊥</button><button class="sym-btn" data-sym="∥">∥</button>
+  <button class="sym-btn" data-sym="≅">≅</button><button class="sym-btn" data-sym="∼">∼</button><button class="sym-btn" data-sym="≤">≤</button>
+  <button class="sym-btn" data-sym="≥">≥</button><button class="sym-btn" data-sym="≠">≠</button>
+  <button class="tbtn active" id="doneTextBtn">✓ Place</button>
+</div>
+
+<aside class="side-drawer" id="sideDrawer">
+  <div class="drawer-head">
+    <div style="display:flex;gap:3px;">
+      <button class="tbtn" id="subTabQuestions">Questions</button>
+      <button class="tbtn active" id="subTabFormulas">Formulas</button>
+      <button class="tbtn" id="subTabDesmos">Desmos</button>
+      <button class="tbtn" id="subTabPhotos">Photos</button>
+    </div>
+    <button class="tbtn" id="closeDrawerBtn">✕</button>
+  </div>
+  <div class="drawer-body" id="viewQuestions" style="display:none;">
+    <select id="topicSelect" class="set-input" style="width:100%;font-weight:700;"></select>
+    <div class="topic-chips" id="diffChips">
+      <button class="chip-btn active" data-diff="all">All</button><button class="chip-btn" data-diff="easy">Easy</button>
+      <button class="chip-btn" data-diff="medium">Medium</button><button class="chip-btn" data-diff="hard">Hard</button>
+      <button class="chip-btn" data-diff="starred">☆ Starred</button>
+    </div>
+    <div id="questionList" style="display:flex;flex-direction:column;gap:6px;"></div>
+  </div>
+  <div class="drawer-body" id="viewFormulas">
+    <input type="text" id="formulaSearch" placeholder="Search formula..." class="set-input" />
+    <div class="topic-chips" id="topicChips">
+      <button class="chip-btn active" data-topic="task">This Task</button><button class="chip-btn" data-topic="all">All</button>
+      <button class="chip-btn" data-topic="circles">Circles</button><button class="chip-btn" data-topic="triangles">Triangles</button>
+      <button class="chip-btn" data-topic="trig">Trig</button><button class="chip-btn" data-topic="algebra">Algebra</button>
+      <button class="chip-btn" data-topic="quadratics">Quadratics</button><button class="chip-btn" data-topic="percent">Percent/Rates</button>
+      <button class="chip-btn" data-topic="volume">3D Volume</button><button class="chip-btn" data-topic="data">Data/Prob</button>
+    </div>
+    <div id="formulaList" style="display:flex;flex-direction:column;gap:8px;"></div>
+  </div>
+  <div class="drawer-body" id="viewDesmos" style="display:none;">
+    <button class="tbtn active" id="spawnDesmosOnBoardBtn" style="height:34px;">+ Put Live Desmos on Board</button>
+    <button class="tbtn" id="desmosRegPresetBtn" style="border:1px solid #e5e7eb;height:32px;">📊 Add Empty Regression Table</button>
+    <button class="tbtn" id="snapDesmosBtn" style="border:1px solid #e5e7eb;height:32px;">📸 Snapshot Desmos as Drawable Image</button>
+    <button class="tbtn" id="saveDesmosBtn" style="border:1px solid #e5e7eb;height:32px;">💾 Save Desmos Graph to Question</button>
+  </div>
+  <div class="drawer-body" id="viewPhotos" style="display:none;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+      <span style="font-size:12px;color:#374151;">Press <strong>Ctrl+V</strong> to paste Desmos photo.</span>
+      <button class="tbtn active" id="uploadPhotoBtn">+ Upload</button>
+      <input type="file" id="uploadPhotoInput" accept="image/*" multiple hidden />
+    </div>
+    <button class="tbtn" id="revealSoloPhotosBtn" style="display:none;border:1px solid #111;">👁️ Reveal Photos</button>
+    <div id="photoList" style="display:flex;flex-direction:column;gap:8px;"></div>
+  </div>
+</aside>
+
+<div class="peek-window" id="peekWindow">
+  <div class="peek-head" id="peekDrag">
+    <span>Desmos Photo (<span id="peekIdxText">1/1</span>)</span>
+    <div style="display:flex;gap:3px;align-items:center;">
+      <button class="tbtn" style="height:24px;padding:0 6px;" id="peekFocusExpr">Expr</button>
+      <button class="tbtn" style="height:24px;padding:0 6px;" id="peekFocusGraph">Graph</button>
+      <button class="tbtn" style="height:24px;padding:0 6px;" id="peekReset">1:1</button>
+      <input type="range" id="peekOpacity" min="35" max="100" value="100" style="width:46px;" />
+      <button class="tbtn active" style="height:24px;padding:0 7px;" id="peekPin">📌 Board</button>
+      <button class="tbtn" style="height:24px;padding:0 6px;" id="peekClose">✕</button>
+    </div>
+  </div>
+  <div class="peek-viewport" id="peekViewport"><img id="peekImg" alt="Desmos" /></div>
+</div>
+
+<!-- SETTINGS -->
+<div class="modal-backdrop" id="settingsBackdrop">
+  <div class="modal">
+    <div class="modal-head"><span>⚙️ Settings</span><button class="tbtn" id="closeSettingsBtn">✕</button></div>
+    <div class="modal-body">
+      <div class="set-section">
+        <h4>Controls &amp; Touchpad</h4>
+        <div class="set-row"><span>Smart Pass-Through (click Desmos/widgets without Cursor)</span><input type="checkbox" id="setSmartPass" /></div>
+        <div class="set-row"><span>Pan Mouse Button</span><select id="setPanButton" class="set-input"><option value="2">Right-Click Drag</option><option value="1">Middle-Click Drag</option></select></div>
+        <div class="set-row"><span>Mouse Wheel / Touchpad</span><select id="setWheelMode" class="set-input"><option value="ctrlZoom">Pinch / Ctrl+Wheel = Zoom (Scroll = Pan)</option><option value="alwaysZoom">Wheel = Zoom Always</option></select></div>
+        <div class="set-row"><span>Touchpad / Pinch Zoom Speed (<span id="zoomSpeedLabel">22</span>)</span><input type="range" id="setZoomSpeed" min="6" max="50" step="2" /></div>
+        <div class="set-row"><span>Stylus Mode (Pen draws, Touch pans)</span><input type="checkbox" id="setStylusOnly" /></div>
+      </div>
+      <div class="set-section">
+        <h4>Whiteboard Defaults</h4>
+        <div class="set-row"><span>Default Tool</span><select id="setDefaultTool" class="set-input"><option value="pen">Pen</option><option value="cursor">Cursor</option><option value="select">Select</option></select></div>
+        <div class="set-row"><span>Default Grid</span><select id="setDefaultGrid" class="set-input"><option value="grid-dot">Dot Grid</option><option value="grid-square">Square Grid</option><option value="grid-none">Blank</option></select></div>
+        <div class="set-row"><span>Shape Snap Delay (<span id="snapDelayLabel">400</span> ms)</span><input type="range" id="setSnapDelay" min="200" max="800" step="50" /></div>
+        <div class="set-row"><span>Laser Fade (<span id="laserFadeLabel">1300</span> ms)</span><input type="range" id="setLaserFade" min="500" max="3000" step="100" /></div>
+        <div class="set-row"><span>Text Size (<span id="textSizeLabel">19</span> px)</span><input type="range" id="setTextSize" min="14" max="32" step="1" /></div>
+        <div class="set-row"><span>5 Ink Colors</span><div id="setColorsMount" style="display:flex;gap:6px;"></div></div>
+      </div>
+      <div class="set-section">
+        <h4>Desmos &amp; Paste</h4>
+        <div class="set-row"><span>Desmos Angles</span><select id="setDesmosAngles" class="set-input"><option value="deg">Degrees</option><option value="rad">Radians</option></select></div>
+        <div class="set-row"><span>Auto Desmos Projector Mode in Zen</span><input type="checkbox" id="setZenProj" /></div>
+        <div class="set-row"><span>Ctrl+V Image Action</span><select id="setPasteTarget" class="set-input"><option value="desmos">Desmos Photo on Board</option><option value="question">Replace Center Question Image</option></select></div>
+      </div>
+      <div class="set-section">
+        <h4>Keyboard Shortcuts (Works on Russian / English Layouts)</h4>
+        <div id="keybindsMount" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;"></div>
+      </div>
+      <div class="set-section">
+        <h4>Supabase Override (Optional if set in config.js)</h4>
+        <div class="set-row"><span>URL</span><input type="text" id="setSbUrl" class="set-input" style="width:320px;" /></div>
+        <div class="set-row"><span>Anon Key</span><input type="password" id="setSbKey" class="set-input" style="width:320px;" /></div>
+        <div class="set-row"><button class="tbtn active" id="testSbBtn">Connect</button><span id="sbStatusText" style="font-size:11px;color:var(--muted);"></span></div>
+      </div>
+      <div class="set-row" style="justify-content:flex-end;"><button class="tbtn" id="resetSettingsBtn" style="border:1px solid #dc2626;color:#dc2626;">Reset Settings</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ROOM MODAL -->
+<div class="modal-backdrop" id="roomBackdrop">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-head"><span>🌐 Live Multiplayer Room</span><button class="tbtn" id="closeRoomBtn">✕</button></div>
+    <div class="modal-body">
+      <div class="set-row"><span>Your Name</span><input type="text" id="roomNameInput" class="set-input" style="width:220px;" /></div>
+      <div class="set-row"><span>Room Code</span><input type="text" id="roomCodeInput" class="set-input" placeholder="e.g. SAT101" style="width:140px;text-transform:uppercase;" /><button class="tbtn active" id="joinRoomBtn">Join</button></div>
+      <div style="display:flex;gap:8px;"><button class="tbtn" id="createRoomBtn" style="flex:1;border:1px solid #111;">+ Create Room &amp; Copy Link</button><button class="tbtn" id="leaveRoomBtn" style="border:1px solid #e5e7eb;display:none;">Leave</button></div>
+      <div class="set-section" id="roomLiveControls" style="display:none;">
+        <div class="set-row"><span>🔒 Tutor Lock (only host changes Q / main board)</span><input type="checkbox" id="tutorLockToggle" /></div>
+        <div id="roomPeersList" style="font-size:12px;color:#374151;"></div>
       </div>
     </div>
+  </div>
+</div>
 
-    <!-- LIVE MULTIPLAYER ROOM MODAL -->
-    <div class="modal-backdrop" id="roomBackdrop">
-      <div class="modal" style="max-width:440px;">
-        <div class="modal-head">
-          <span>🌐 Live Multiplayer Room (Supabase)</span>
-          <button class="tbtn" id="closeRoomBtn">✕</button>
-        </div>
-        <div class="modal-body">
-          <div class="set-row">
-            <span>Your Name</span>
-            <input
-              type="text"
-              id="roomNameInput"
-              class="set-input"
-              value="Tutor"
-              style="width:220px;"
-            />
-          </div>
-          <div class="set-row">
-            <span>Room Code</span>
-            <input
-              type="text"
-              id="roomCodeInput"
-              class="set-input"
-              placeholder="e.g. SAT101"
-              style="width:140px;text-transform:uppercase;"
-            />
-            <button class="tbtn active" id="joinRoomBtn">Join</button>
-          </div>
-          <div style="display:flex;gap:8px;">
-            <button
-              class="tbtn"
-              id="createRoomBtn"
-              style="flex:1;border:1px solid #111;"
-            >
-              + Create New Room &amp; Copy Link
-            </button>
-            <button
-              class="tbtn"
-              id="leaveRoomBtn"
-              style="border:1px solid #e5e7eb;display:none;"
-            >
-              Leave
-            </button>
-          </div>
-          <div class="set-section" id="roomLiveControls" style="display:none;">
-            <div class="set-row">
-              <span>🔒 Tutor Lock (only host changes Q / main board)</span>
-              <input type="checkbox" id="tutorLockToggle" />
-            </div>
-            <div id="roomPeersList" style="font-size:12px;color:#374151;"></div>
-          </div>
-          <div id="roomHintNote" style="font-size:11px;color:#6b7280;">
-            Requires Supabase URL &amp; Key in ⚙️ Settings. Everyone in the same
-            room sees live cursors, drawings, Desmos, and question switches.
-          </div>
-        </div>
-      </div>
-    </div>
+<div class="toast" id="toast"></div>
 
-    <div class="toast" id="toast"></div>
-
-    <script src="data/formulas.js"></script>
-    <script src="data/questions-starter.js"></script>
-    <script src="app.js"></script>
-  </body>
+<script src="config.js"></script>
+<script src="data/formulas.js"></script>
+<script>window.SAT_QUESTIONS = [];</script>
+<script src="data/q_circles.js"></script>
+<script src="data/q_probability.js"></script>
+<script src="data/q_lines_angles.js"></script>
+<script src="data/q_right_triangles.js"></script>
+<script src="data/questions-starter.js"></script>
+<!-- Add remaining topic scripts here (q_right_triangles.js, q_lines_angles.js, etc.) -->
+<script src="app.js"></script>
+</body>
 </html>
