@@ -499,7 +499,7 @@
   /* ==================== QUESTION LOADING & SWITCHING ==================== */
   function currentQ() { return QUESTIONS[currentIndex] || { id: 'empty', topic: 'Empty', num: '', difficulty: '', prompt: 'No questions loaded.', diagramHtml: '', type: 'mcq', choices: {}, answer: '', formulas: [] }; }
 
-  async function switchQuestion(idx, fromRemote = false) {
+  async function switchQuestion(idx, fromRemote = false, forceReload = false) {
     commitText();
     if (hasLoadedCurrentQ && QUESTIONS.length && currentQ().id !== 'empty') {
       await saveWorkspace();
