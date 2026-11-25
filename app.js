@@ -114,6 +114,15 @@
   let customDiagramImg = null;
   let picked = null;
 
+  let activeRoom = (localStorage.getItem('sat_wb_active_room') || 'LOCAL').toUpperCase();
+  let savedRooms = (() => {
+    try {
+      const arr = JSON.parse(localStorage.getItem('sat_wb_saved_rooms') || '["LOCAL"]');
+      return Array.isArray(arr) && arr.length ? arr : ['LOCAL'];
+    } catch { return ['LOCAL']; }
+  })();
+  let hasLoadedCurrentQ = false;
+
   let progress = JSON.parse(localStorage.getItem('sat_wb_progress') || '{}');
   let soloMode = false;
   let soloRevealed = false;
@@ -182,23 +191,94 @@
     } catch {}
   }
 
+  function rememberRoom(code) {
+    code = (code || 'LOCAL').trim().toUpperCase() || 'LOCAL';
+    activeRoom = code;
+    if (!savedRooms.includes(code)) savedRooms.push(code);
+    localStorage.setItem('sat_wb_active_room', code);
+    localStorage.setItem('sat_wb_saved_rooms', JSON.stringify(savedRooms));
+    const url = new URL(location.href);
+    if (code === 'LOCAL') url.searchParams.delete('room');
+    else url.searchParams.set('room', code);
+    history.replaceState({}, '', url.pathname + url.search);
+    document.getElementById('roomBadgeText').textContent = code === 'LOCAL' ? 'Local' : code;
+    renderSavedRooms();
+  }
+
+  function renderSavedRooms() {
+    const mount = document.getElementById('savedRoomsList');
+    if (!mount) return;
+    mount.innerHTML = '';
+    savedRooms.forEach(code => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:inline-flex;align-items:center;gap:2px;';
+      const btn = document.createElement('button');
+      btn.className = 'chip-btn' + (code === activeRoom ? ' active' : '');
+      btn.textContent = code === 'LOCAL' ? 'Local Board' : code;
+      btn.onclick = () => swapRoom(code);
+      wrap.appendChild(btn);
+      if (code !== 'LOCAL') {
+        const del = document.createElement('button');
+        del.className = 'chip-btn';
+        del.textContent = '×';
+        del.title = 'Remove room from list';
+        del.onclick = (e) => {
+          e.stopPropagation();
+          savedRooms = savedRooms.filter(r => r !== code);
+          localStorage.setItem('sat_wb_saved_rooms', JSON.stringify(savedRooms));
+          if (activeRoom === code) swapRoom('LOCAL');
+          else renderSavedRooms();
+        };
+        wrap.appendChild(del);
+      }
+      mount.appendChild(wrap);
+    });
+  }
+
+  async function swapRoom(code) {
+    code = (code || 'LOCAL').trim().toUpperCase() || 'LOCAL';
+    if (hasLoadedCurrentQ) await saveWorkspace();
+    if (code === 'LOCAL') {
+      await leaveRoom(true);
+      return;
+    }
+    await joinRoom(code, localStorage.getItem('sat_wb_host_' + code) === clientId);
+  }
+
   async function joinRoom(code, hostFlag = false) {
-    if (!sb && !(await initSupabase(true))) { toast('Add Supabase URL & Key in Settings or use an Invite Link'); return; }
     code = (code || '').trim().toUpperCase();
     if (!code) return;
-    if (roomChannel) await leaveRoom();
+    if (hasLoadedCurrentQ && activeRoom !== code) await saveWorkspace();
+    if (roomChannel && sb) { await sb.removeChannel(roomChannel); roomChannel = null; }
 
+    if (hostFlag) localStorage.setItem('sat_wb_host_' + code, clientId);
+    isHost = hostFlag || (localStorage.getItem('sat_wb_host_' + code) === clientId);
     roomCode = code;
-    isHost = hostFlag;
-    document.getElementById('roomBadgeText').textContent = code;
+    rememberRoom(code);
+
+    const hasSb = sb || await initSupabase(true);
+    if (!hasSb) {
+      document.getElementById('roomLiveControls').style.display = 'none';
+      document.getElementById('leaveRoomBtn').style.display = 'inline-flex';
+      await switchQuestion(currentIndex, false, true);
+      toast(`Swapped to room ${code} (saved locally)`);
+      return;
+    }
+
     document.getElementById('roomLiveControls').style.display = 'flex';
     document.getElementById('leaveRoomBtn').style.display = 'inline-flex';
-    document.getElementById('tutorLockToggle').disabled = !isHost;
 
     const { data: existing } = await sb.from('rooms').select('*').eq('room_code', code).maybeSingle();
-    if (existing && !isHost) {
+    if (existing) {
+      if (existing.host_id === clientId) {
+        isHost = true;
+        localStorage.setItem('sat_wb_host_' + code, clientId);
+      }
       await applyRoomSnapshot(existing);
-    } else if (isHost) {
+    } else {
+      isHost = true;
+      localStorage.setItem('sat_wb_host_' + code, clientId);
+      await switchQuestion(currentIndex, false, true);
       await sb.from('rooms').upsert({
         room_code: code, host_id: clientId, tutor_locked: tutorLocked,
         current_question_id: currentQ().id, diagram_scale: diagramScale,
@@ -206,6 +286,7 @@
         desmos_state: desmosCalc ? desmosCalc.getState() : savedDesmosState
       });
     }
+    document.getElementById('tutorLockToggle').disabled = !isHost;
 
     const myName = document.getElementById('roomNameInput').value || 'Friend';
     roomChannel = sb.channel(`room:${code}`, { config: { presence: { key: clientId } } });
@@ -229,6 +310,7 @@
         document.getElementById('tutorLockToggle').checked = tutorLocked;
         applyDiagramScaleUI();
         renderBoard();
+        await saveWorkspace();
       })
       .on('broadcast', { event: 'cursor' }, ({ payload }) => {
         if (payload.sender === clientId) return;
@@ -248,19 +330,24 @@
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await roomChannel.track({ id: clientId, name: myName });
-          toast(`Joined room ${code}`);
+          toast(`Connected to room ${code}`);
         }
       });
   }
 
-  async function leaveRoom() {
+  async function leaveRoom(reloadBoard = true) {
+    if (hasLoadedCurrentQ) await saveWorkspace();
     if (roomChannel && sb) await sb.removeChannel(roomChannel);
     roomChannel = null; roomCode = null; isHost = false; peers = {};
     Object.keys(peerLasers).forEach(k => delete peerLasers[k]);
     document.getElementById('cursorsLayer').innerHTML = '';
-    document.getElementById('roomBadgeText').textContent = 'Room';
     document.getElementById('roomLiveControls').style.display = 'none';
     document.getElementById('leaveRoomBtn').style.display = 'none';
+    rememberRoom('LOCAL');
+    if (reloadBoard) {
+      await switchQuestion(currentIndex, false, true);
+      toast('Switched to Local Board');
+    }
   }
 
   async function applyRoomSnapshot(r) {
@@ -268,24 +355,33 @@
       const idx = QUESTIONS.findIndex(q => q.id === r.current_question_id);
       if (idx !== -1) await switchQuestion(idx, true);
     }
-    objects = r.board_objects || [];
-    diagramScale = Number(r.diagram_scale) || 1;
+    const remoteObjs = r.board_objects || [];
+    if (remoteObjs.length) {
+      objects = remoteObjs;
+      diagramScale = Number(r.diagram_scale) || 1;
+      savedDesmosState = r.desmos_state || null;
+      await saveWorkspace();
+    } else {
+      await loadWorkspace();
+    }
     tutorLocked = !!r.tutor_locked;
-    savedDesmosState = r.desmos_state || null;
+    document.getElementById('tutorLockToggle').checked = tutorLocked;
     applyDiagramScaleUI();
     renderBoard();
   }
 
   function broadcastBoard() {
-    if (!roomChannel) return;
+    if (!roomCode) return;
     if (tutorLocked && !isHost) return;
-    roomChannel.send({
-      type: 'broadcast', event: 'board_sync',
-      payload: { sender: clientId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
-    });
-    if (sb && isHost) {
+    if (roomChannel) {
+      roomChannel.send({
+        type: 'broadcast', event: 'board_sync',
+        payload: { sender: clientId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
+      });
+    }
+    if (sb && (!tutorLocked || isHost)) {
       sb.from('rooms').upsert({
-        room_code: roomCode, host_id: clientId, tutor_locked: tutorLocked,
+        room_code: roomCode, host_id: isHost ? clientId : undefined, tutor_locked: tutorLocked,
         current_question_id: currentQ().id, diagram_scale: diagramScale,
         board_objects: objects, board_widgets: boardWidgets,
         desmos_state: desmosCalc ? desmosCalc.getState() : savedDesmosState,
@@ -316,9 +412,10 @@
 
   async function switchQuestion(idx, fromRemote = false) {
     commitText();
-    if (QUESTIONS.length && currentQ().id !== 'empty') {
+    if (hasLoadedCurrentQ && QUESTIONS.length && currentQ().id !== 'empty') {
       await saveWorkspace();
     }
+    hasLoadedCurrentQ = false;
     currentIndex = QUESTIONS.length ? (idx + QUESTIONS.length) % QUESTIONS.length : 0;
     const q = currentQ();
     picked = null;
@@ -374,11 +471,12 @@
     objects = []; boardWidgets = []; desmosPhotos = []; savedDesmosState = null; diagramScale = 1;
     selectedId = null;
 
-    if (!fromRemote) await loadWorkspace();
+    if (!fromRemote || forceReload) await loadWorkspace();
+    hasLoadedCurrentQ = true;
     applyDiagramScaleUI();
     renderPhotos();
     renderBoard();
-    if (!fromRemote) broadcastBoard();
+    if (!fromRemote && !forceReload) broadcastBoard();
   }
 
   function updateStarUI() {
@@ -1424,14 +1522,21 @@
   document.getElementById('exitZenBtn').onclick = toggleZen;
 
   /* ==================== SAVE / LOAD / PACK ==================== */
+  function workspaceKey(qId) {
+    return `room_${activeRoom || 'LOCAL'}_q_${qId}`;
+  }
   async function saveWorkspace() {
-    await idbSet('q_' + currentQ().id, {
+    if (!QUESTIONS.length || currentQ().id === 'empty') return;
+    await idbSet(workspaceKey(currentQ().id), {
       objects, diagramScale, desmosPhotos, boardWidgets, customDiagramImg,
       savedDesmosState: desmosCalc ? desmosCalc.getState() : savedDesmosState
     });
   }
   async function loadWorkspace() {
-    const d = await idbGet('q_' + currentQ().id);
+    let d = await idbGet(workspaceKey(currentQ().id));
+    if (!d && activeRoom === 'LOCAL') {
+      d = await idbGet('q_' + currentQ().id); // keep any legacy local drawings
+    }
     if (d) {
       objects = d.objects || []; desmosPhotos = d.desmosPhotos || []; savedDesmosState = d.savedDesmosState || null;
       diagramScale = d.diagramScale || 1; boardWidgets = d.boardWidgets || [];
@@ -1547,7 +1652,7 @@
     joinRoom(code, true);
     toast(`Room ${code} created & invite link copied`);
   };
-  document.getElementById('leaveRoomBtn').onclick = leaveRoom;
+  document.getElementById('leaveRoomBtn').onclick = () => leaveRoom(true);
   document.getElementById('tutorLockToggle').onchange = (e) => { tutorLocked = e.target.checked; broadcastBoard(); };
 
   /* ==================== SHORTCUTS (e.code) ==================== */
@@ -1604,6 +1709,10 @@
     document.getElementById('roomNameInput').value = savedName;
     document.getElementById('roomNameInput').onchange = (e) => localStorage.setItem('sat_wb_name', e.target.value);
 
+    const startRoom = (params.get('room') || localStorage.getItem('sat_wb_active_room') || 'LOCAL').toUpperCase();
+    rememberRoom(startRoom);
+    if (startRoom !== 'LOCAL') document.getElementById('roomCodeInput').value = startRoom;
+
     renderColorPalette();
     applyGrid(settings.defaultGrid);
     document.getElementById('panHintText').textContent = Number(settings.panButton) === 2 ? 'Right-drag: Pan' : 'Mid-drag: Pan';
@@ -1613,10 +1722,8 @@
     setTool(settings.defaultTool || 'pen');
     await switchQuestion(0);
 
-    const urlRoom = params.get('room');
-    if (urlRoom && sb) {
-      document.getElementById('roomCodeInput').value = urlRoom;
-      joinRoom(urlRoom, false);
+    if (startRoom !== 'LOCAL') {
+      await joinRoom(startRoom, localStorage.getItem('sat_wb_host_' + startRoom) === clientId);
     }
   });
   })();
