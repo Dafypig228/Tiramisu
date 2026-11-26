@@ -172,8 +172,14 @@
       if (sess && sess.session && sess.session.user) {
         clientId = sess.session.user.id;
       } else {
-        const { data: anonData } = await sb.auth.signInAnonymously().catch(() => ({ data: null }));
+        const { data: anonData, error: anonErr } = await sb.auth.signInAnonymously().catch((e) => ({ data: null, error: e }));
         if (anonData && anonData.user) clientId = anonData.user.id;
+        else {
+          console.warn('Anonymous sign-in failed:', anonErr && anonErr.message);
+          document.getElementById('sbStatusText').textContent = 'Live sync only — rooms won\'t be saved (enable Anonymous sign-ins in Supabase Auth)';
+          if (!silent) toast('Supabase: anonymous sign-in is off');
+          return true;
+        }
       }
       document.getElementById('sbStatusText').textContent = 'Connected (Auto-Login Ready)';
       if (!silent) toast('Supabase connected');
@@ -286,6 +292,80 @@
     });
   }
 
+  function boardPayload() {
+    return {
+      sender: peerId, questionId: currentQ().id, objects, diagramScale, tutorLocked,
+      boardWidgets, desmosState: shareableDesmos(desmosCalc ? desmosCalc.getState() : savedDesmosState)
+    };
+  }
+
+  /* ---- Desmos live sync ---- */
+  let lastDesmosJson = '';
+  let desmosSendTimer = null;
+
+  // Desmos state without the camera (pan/zoom) — each person keeps their own view.
+  function shareableDesmos(st) {
+    if (!st) return st;
+    const copy = { ...st, graph: { ...(st.graph || {}) } };
+    delete copy.graph.viewport;
+    return copy;
+  }
+
+  // Put a remote Desmos state into the local calculator without echoing it back. Keeps the local viewport.
+  function applyDesmosState(state) {
+    if (!desmosCalc || !state) return;
+    const cur = desmosCalc.getState();
+    if (JSON.stringify(shareableDesmos(cur)) === JSON.stringify(shareableDesmos(state))) return;
+    const merged = { ...state, graph: { ...(state.graph || {}) } };
+    if (cur.graph && cur.graph.viewport) merged.graph.viewport = cur.graph.viewport;
+    else delete merged.graph.viewport;
+    desmosCalc.setState(merged, { allowUndo: false });
+    lastDesmosJson = JSON.stringify(shareableDesmos(desmosCalc.getState()));
+  }
+
+  // Called by Desmos on every local edit; debounced, then sent to the room.
+  function onLocalDesmosChange() {
+    clearTimeout(desmosSendTimer);
+    desmosSendTimer = setTimeout(() => {
+      if (!desmosCalc) return;
+      const st = desmosCalc.getState();
+      savedDesmosState = st;
+      saveWorkspace();
+      const shared = shareableDesmos(st);
+      const json = JSON.stringify(shared);
+      if (json === lastDesmosJson) return; // only pan/zoom changed, or the change came from a remote setState
+      lastDesmosJson = json;
+      if (!roomCode || (tutorLocked && !isHost)) return;
+      if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'desmos_state', payload: { sender: peerId, questionId: currentQ().id, state: shared } });
+      if (sb) sb.from('rooms').update({ desmos_state: st, board_widgets: boardWidgets, updated_at: new Date().toISOString() })
+        .eq('room_code', roomCode).then(({ error }) => { if (error) console.warn('Room DB update:', error.message); });
+    }, 350);
+  }
+
+  // Replace on-board widgets with the room's version. A live Desmos is kept (only moved/updated) so it doesn't flicker.
+  function applyRemoteWidgets(widgets, desmosState) {
+    widgets = Array.isArray(widgets) ? widgets.map(w => ({ ...w })) : [];
+    savedDesmosState = desmosState || null;
+    const remoteDesmos = widgets.find(w => w.kind === 'desmos');
+    const desmosEl = document.getElementById('desmosBoardWidget');
+    document.querySelectorAll('.board-widget').forEach(el => { if (el !== desmosEl) el.remove(); });
+    const keepDesmos = !!(desmosEl && remoteDesmos && desmosCalc && desmosEl._wd);
+    if (desmosEl && !keepDesmos) { desmosEl.remove(); desmosCalc = null; }
+    boardWidgets = widgets;
+    widgets.forEach((wd, i) => {
+      if (wd.kind === 'desmos' && keepDesmos) {
+        const local = Object.assign(desmosEl._wd, wd);
+        boardWidgets[i] = local;
+        desmosEl.style.left = local.x + 'px'; desmosEl.style.top = local.y + 'px';
+        desmosEl.style.width = local.w + 'px'; desmosEl.style.height = local.h + 'px';
+        desmosCalc.resize();
+        applyDesmosState(savedDesmosState);
+      } else {
+        renderBoardWidget(wd);
+      }
+    });
+  }
+
   async function joinRoom(code, hostFlag = false) {
     code = (code || '').trim().toUpperCase();
     if (!code) return;
@@ -355,19 +435,19 @@
       })
       .on('presence', { event: 'join' }, ({ key }) => {
         if (key === peerId) return;
-        if (isHost || objects.length) {
+        if (isHost || objects.length || boardWidgets.length) {
           roomChannel.send({
             type: 'broadcast', event: 'board_sync',
-            payload: { sender: peerId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
+            payload: boardPayload()
           });
         }
       })
       .on('broadcast', { event: 'request_sync' }, ({ payload }) => {
         if (payload.sender === peerId) return;
-        if (isHost || objects.length) {
+        if (isHost || objects.length || boardWidgets.length) {
           roomChannel.send({
             type: 'broadcast', event: 'board_sync',
-            payload: { sender: peerId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
+            payload: boardPayload()
           });
         }
       })
@@ -387,10 +467,23 @@
         objects = payload.objects || [];
         diagramScale = payload.diagramScale || 1;
         tutorLocked = !!payload.tutorLocked;
+        if (Array.isArray(payload.boardWidgets)) applyRemoteWidgets(payload.boardWidgets, payload.desmosState);
         document.getElementById('tutorLockToggle').checked = tutorLocked;
         applyDiagramScaleUI();
         renderBoard();
         await saveWorkspace();
+      })
+      .on('broadcast', { event: 'answer_check' }, ({ payload }) => {
+        if (payload.sender === peerId) return;
+        const sameQ = payload.questionId === currentQ().id;
+        toast(`${payload.name} answered ${payload.shown}${sameQ ? '' : ' (other question)'} — ${payload.correct ? 'correct ✓' : 'wrong ✗'}`);
+      })
+      .on('broadcast', { event: 'desmos_state' }, ({ payload }) => {
+        if (payload.sender === peerId) return;
+        if (payload.questionId !== currentQ().id) return;
+        savedDesmosState = payload.state || null;
+        applyDesmosState(savedDesmosState);
+        saveWorkspace();
       })
       .on('broadcast', { event: 'cursor' }, ({ payload }) => {
         if (payload.sender === peerId) return;
@@ -441,10 +534,11 @@
       if (idx !== -1) await switchQuestion(idx, true);
     }
     const remoteObjs = r.board_objects || [];
-    if (remoteObjs.length) {
+    const remoteWidgets = Array.isArray(r.board_widgets) ? r.board_widgets : [];
+    if (remoteObjs.length || remoteWidgets.length || r.desmos_state) {
       objects = remoteObjs;
       diagramScale = Number(r.diagram_scale) || 1;
-      savedDesmosState = r.desmos_state || null;
+      applyRemoteWidgets(remoteWidgets, r.desmos_state || null);
       await saveWorkspace();
     } else {
       await loadWorkspace();
@@ -461,7 +555,7 @@
     if (roomChannel) {
       roomChannel.send({
         type: 'broadcast', event: 'board_sync',
-        payload: { sender: peerId, questionId: currentQ().id, objects, diagramScale, tutorLocked }
+        payload: boardPayload()
       });
     }
     if (sb && (!tutorLocked || isHost)) {
@@ -512,7 +606,8 @@
     soloRevealed = false;
 
     document.getElementById('qMetaLabel').textContent = `${q.topic} · ${q.num} (${q.difficulty})`;
-    document.getElementById('qNavText').textContent = `${currentIndex + 1} / ${QUESTIONS.length}`;
+    missedThisVisit = false;
+    updateNavText();
     document.getElementById('qPrompt').innerHTML = q.prompt;
 
     const diagWrap = document.getElementById('qDiagramWrap');
@@ -576,31 +671,49 @@
     const id = currentQ().id;
     progress[id] = { ...(progress[id] || {}), starred: !(progress[id] && progress[id].starred) };
     localStorage.setItem('sat_wb_progress', JSON.stringify(progress));
-    updateStarUI(); renderQuestionBrowser(); syncProfileToSupabase();
+    updateStarUI(); renderQuestionBrowser(); updateNavText(); syncProfileToSupabase();
   };
 
+  // Wrong list: a wrong answer puts the question on it. It comes off only when the question
+  // is answered correctly on the FIRST try of a later visit (so A-B-C-D guessing doesn't clear it).
+  let missedThisVisit = false;
+  function recordAnswer(q, correct, shown) {
+    const st = { ...(progress[q.id] || {}) };
+    if (correct) {
+      st.solved = true;
+      if (!missedThisVisit && st.wrong) { st.wrong = false; toast('Correct — removed from Wrong list'); }
+      else toast('Correct');
+    } else {
+      if (!missedThisVisit) st.wrongCount = (st.wrongCount || 0) + 1;
+      st.wrong = true; missedThisVisit = true;
+      toast('Wrong — added to Wrong list');
+    }
+    progress[q.id] = st;
+    localStorage.setItem('sat_wb_progress', JSON.stringify(progress));
+    renderQuestionBrowser(); updateNavText(); syncProfileToSupabase();
+    if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'answer_check', payload: {
+      sender: peerId, name: document.getElementById('roomNameInput').value || 'Friend', questionId: q.id, shown, correct } });
+  }
   document.getElementById('checkStatusChip').onclick = () => {
     const q = currentQ();
     if (q.type === 'mcq') {
       if (!picked) { toast('Tap letter A/B/C/D first'); return; }
       document.querySelectorAll('.choice-chip').forEach(b => b.classList.remove('correct', 'wrong'));
       const chip = document.querySelector(`.choice-chip[data-choice="${picked}"]`);
-      if (picked === q.answer) {
-        chip.classList.add('correct'); toast('Correct');
-        progress[q.id] = { ...(progress[q.id] || {}), solved: true };
-        localStorage.setItem('sat_wb_progress', JSON.stringify(progress));
-      } else { chip.classList.add('wrong'); toast('Wrong'); }
+      const ok = picked === q.answer;
+      chip.classList.add(ok ? 'correct' : 'wrong');
+      recordAnswer(q, ok, picked);
     } else {
       const val = document.getElementById('gridInField').value.trim();
       if (!val) return;
       const evalNum = (s) => s.includes('/') ? (Number(s.split('/')[0]) / Number(s.split('/')[1])) : Number(s);
-      if (Math.abs(evalNum(val) - evalNum(String(q.answer))) < 0.001) toast('Correct');
-      else toast('Wrong');
+      const ok = Math.abs(evalNum(val) - evalNum(String(q.answer))) < 0.001;
+      recordAnswer(q, ok, val);
     }
   };
 
-  document.getElementById('prevQBtn').onclick = () => switchQuestion(currentIndex - 1);
-  document.getElementById('nextQBtn').onclick = () => switchQuestion(currentIndex + 1);
+  document.getElementById('prevQBtn').onclick = () => stepCollection(-1);
+  document.getElementById('nextQBtn').onclick = () => stepCollection(1);
 
   /* ==================== CAMERA, PAN & SMART CLICK-THROUGH ==================== */
   const boardStage = document.getElementById('boardStage');
@@ -625,7 +738,7 @@
 
   const PASSTHROUGH_SEL = '.bw-head, .bw-resize, .desmos-embed, .q-diagram-bar, .choice-letter-hit, #checkStatusChip, #starQuestionBtn, .gridin-row';
   function updateSmartPassThrough(clientX, clientY) {
-    if (pState || rightPan || spaceHeld) return;
+    if (touchUI || pState || rightPan || spaceHeld) return;
     if (tool === 'cursor') { boardCanvas.classList.add('pass-through'); return; }
     if (!settings.smartPass) { boardCanvas.classList.remove('pass-through'); return; }
     const els = document.elementsFromPoint(clientX, clientY);
@@ -981,17 +1094,20 @@
 
   /* ==================== POINTER EVENTS ==================== */
   let pState = null;
-  boardCanvas.addEventListener('pointerdown', (e) => {
+  // iPad / touch screens: the canvas ignores pointers and the stage listens instead (see TOUCH / IPAD INPUT)
+  const touchUI = window.matchMedia('(pointer: coarse)').matches || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  function capturePtr(e) { try { (touchUI ? boardStage : boardCanvas).setPointerCapture(e.pointerId); } catch {} }
+  function onBoardDown(e) {
     if (e.button === Number(settings.panButton)) return;
     if (settings.stylusOnly && e.pointerType === 'touch') {
       pState = { mode: 'pan', sx: e.clientX - cam.x, sy: e.clientY - cam.y };
-      boardCanvas.setPointerCapture(e.pointerId);
+      capturePtr(e);
       return;
     }
     if (tutorLocked && !isHost && roomChannel) { toast('Board locked by Tutor'); return; }
 
     const pt = screenToWorld(e.clientX, e.clientY);
-    if (spaceHeld || e.button === 1) { pState = { mode: 'pan', sx: e.clientX - cam.x, sy: e.clientY - cam.y }; boardCanvas.setPointerCapture(e.pointerId); return; }
+    if (spaceHeld || e.button === 1) { pState = { mode: 'pan', sx: e.clientX - cam.x, sy: e.clientY - cam.y }; capturePtr(e); return; }
 
     if (tool === 'text') {
       if (textBox.style.display === 'block') { commitText(); return; }
@@ -1015,26 +1131,26 @@
           const b = getBounds(sel);
           if (Math.hypot(pt.x - (b.x + b.w + 4), pt.y - (b.y + b.h + 4)) < 14 / cam.z) {
             pushUndo(); pState = { mode: 'resize', obj: sel, sx: pt.x, sy: pt.y, ow: sel.w || b.w, oh: sel.h || b.h };
-            boardCanvas.setPointerCapture(e.pointerId); return;
+            capturePtr(e); return;
           }
         }
       }
       const hit = hitTest(pt); selectedId = hit ? hit.id : null; renderBoard();
       if (hit) {
         pushUndo(); pState = { mode: 'move', obj: hit, sx: pt.x, sy: pt.y, ox: hit.x, oy: hit.y, opts: hit.points ? hit.points.map(p => ({ ...p })) : null };
-        boardCanvas.setPointerCapture(e.pointerId);
+        capturePtr(e);
       }
       return;
     }
     if (tool === 'shape') {
       pushUndo();
       const obj = { id: 'o_' + Date.now(), type: shapeType === 'dashed' ? 'line' : shapeType, dashed: shapeType === 'dashed', onDiagram: isInsideDiagram(pt), x: pt.x, y: pt.y, w: 1, h: 1, color: inkColor, width: inkWidth };
-      objects.push(obj); pState = { mode: 'shape', obj }; boardCanvas.setPointerCapture(e.pointerId); return;
+      objects.push(obj); pState = { mode: 'shape', obj }; capturePtr(e); return;
     }
 
     pushUndo();
     const s = { id: 'o_' + Date.now() + Math.random(), type: 'stroke', onDiagram: isInsideDiagram(pt), color: inkColor, width: tool === 'highlighter' ? inkWidth * 3.8 : inkWidth, alpha: tool === 'highlighter' ? 0.28 : 1, points: [pt] };
-    objects.push(s); pState = { mode: 'stroke', obj: s, t: Date.now() }; boardCanvas.setPointerCapture(e.pointerId);
+    objects.push(s); pState = { mode: 'stroke', obj: s, t: Date.now() }; capturePtr(e);
     if (snapOn && tool === 'pen') {
       const delay = Number(settings.snapDelay) || 400;
       pState.timer = setTimeout(() => {
@@ -1044,9 +1160,9 @@
         }
       }, delay);
     }
-  });
+  }
 
-  boardCanvas.addEventListener('pointermove', (e) => {
+  function onBoardMove(e) {
     const pt = screenToWorld(e.clientX, e.clientY);
     if (tool === 'laser' && laserActive) {
       laserTrail.push({ x: pt.x, y: pt.y, t: Date.now() });
@@ -1102,9 +1218,9 @@
       }
       renderBoard();
     }
-  });
+  }
 
-  boardCanvas.addEventListener('pointerup', () => {
+  function onBoardUp() {
     laserActive = false;
     if (pState) {
       clearTimeout(pState.timer);
@@ -1130,12 +1246,130 @@
         broadcastBoard();
       }
     }
-  });
-  boardCanvas.addEventListener('dblclick', (e) => {
+  }
+  function onBoardDblClick(e) {
     const pt = screenToWorld(e.clientX, e.clientY);
     const hit = hitTest(pt);
     if (hit && hit.type === 'text') openText(e.clientX, e.clientY, hit);
-  });
+  }
+
+  /* ==================== TOUCH / IPAD INPUT ==================== */
+  // Rules: Apple Pencil draws. Before a Pencil is seen, one finger draws (with the current tool).
+  // Two fingers always pan + pinch-zoom (and cancel a stroke the first finger just started).
+  // After a Pencil is seen (or "Stylus Mode" is on), one finger pans and touches never draw.
+  // Touches right after/while the Pencil is down are ignored (palm).
+  const touchPts = new Map();
+  let pinch = null;
+  let penSeen = false;
+  let lastPenUp = 0;
+  const UI_TARGETS = '.board-widget, .choice-letter-hit, #checkStatusChip, #starQuestionBtn, .q-diagram-bar, .gridin-row, button, input, textarea, select, a';
+
+  function touchesDraw() { return !(settings.stylusOnly || penSeen); }
+  function setPanHint() {
+    const el = document.getElementById('panHintText');
+    if (!el) return;
+    if (touchUI) el.textContent = touchesDraw() ? '✌️ move / zoom' : '☝️ move · ✏️ draw';
+    else el.textContent = Number(settings.panButton) === 2 ? 'Right-drag: Pan' : 'Mid-drag: Pan';
+  }
+  function startPinch() {
+    const [a, b] = [...touchPts.values()];
+    pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx0: (a.x + b.x) / 2, my0: (a.y + b.y) / 2, z0: cam.z, cx0: cam.x, cy0: cam.y };
+  }
+  function updatePinch() {
+    const [a, b] = [...touchPts.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const nz = Math.min(3, Math.max(0.35, pinch.z0 * d / pinch.d0));
+    const wx = (pinch.mx0 - pinch.cx0) / pinch.z0, wy = (pinch.my0 - pinch.cy0) / pinch.z0;
+    cam.z = nz; cam.x = mx - wx * nz; cam.y = my - wy * nz;
+    applyCamera();
+  }
+  function cancelActiveStroke() {
+    if (!pState) return;
+    clearTimeout(pState.timer);
+    if ((pState.mode === 'stroke' || pState.mode === 'shape') && pState.obj) {
+      const dead = pState.obj;
+      objects = objects.filter(o => o !== dead && o.id !== dead.id);
+      const u = undoByQ[currentQ().id]; if (u && u.length) u.pop();
+      if (roomChannel) broadcastBoard(); // peers may have received part of it
+    }
+    pState = null; laserActive = false; renderBoard();
+  }
+  function stageDown(e) {
+    if (e.pointerType === 'pen' && !penSeen) {
+      penSeen = true; setPanHint();
+      if (!settings.stylusOnly) toast('Apple Pencil detected — fingers now move the board');
+    }
+    if (e.pointerType === 'touch') {
+      if (Date.now() - lastPenUp < 400 || (pState && pState.pointerType === 'pen')) return; // palm
+      touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touchPts.size === 2) { cancelActiveStroke(); startPinch(); return; }
+      if (touchPts.size > 2 || pinch) return;
+      if (!touchesDraw() || tool === 'cursor') {
+        pState = { mode: 'pan', sx: e.clientX - cam.x, sy: e.clientY - cam.y, pointerType: 'touch', pointerId: e.pointerId };
+        return;
+      }
+    } else if (tool === 'cursor') return;
+    if (pState) return; // already busy with another pointer
+    onBoardDown(e);
+    if (pState) { pState.pointerType = e.pointerType; pState.pointerId = e.pointerId; }
+  }
+  function stageMove(e) {
+    if (e.pointerType === 'touch' && touchPts.has(e.pointerId)) {
+      touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch) { if (touchPts.size >= 2) updatePinch(); return; }
+    }
+    if (pState && pState.pointerId !== undefined && pState.pointerId !== e.pointerId) return;
+    if (pState && pState.mode === 'stroke' && !pState.snapped && e.getCoalescedEvents) {
+      // Pencil reports many more points than move events — keep them for smooth ink
+      const list = e.getCoalescedEvents();
+      const pts = pState.obj.points;
+      for (let i = 0; i < list.length - 1; i++) {
+        const p = screenToWorld(list[i].clientX, list[i].clientY);
+        const last = pts[pts.length - 1];
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 1.2 / cam.z) pts.push(p);
+      }
+    }
+    onBoardMove(e);
+  }
+  function stageUp(e) {
+    if (e.pointerType === 'pen') lastPenUp = Date.now();
+    if (e.pointerType === 'touch' && touchPts.has(e.pointerId)) {
+      touchPts.delete(e.pointerId);
+      if (pinch) { if (touchPts.size < 2) pinch = null; return; }
+    }
+    if (pState && pState.pointerId !== undefined && pState.pointerId !== e.pointerId) return;
+    onBoardUp(e);
+  }
+
+  if (touchUI) {
+    document.body.classList.add('touch-ui');
+    boardStage.addEventListener('pointerdown', (e) => { if (e.target.closest && e.target.closest(UI_TARGETS)) return; stageDown(e); });
+    boardStage.addEventListener('pointermove', stageMove);
+    boardStage.addEventListener('pointerup', stageUp);
+    boardStage.addEventListener('pointercancel', stageUp);
+    boardStage.addEventListener('dblclick', (e) => { if (!(e.target.closest && e.target.closest(UI_TARGETS))) onBoardDblClick(e); });
+  } else {
+    boardCanvas.addEventListener('pointerdown', onBoardDown);
+    boardCanvas.addEventListener('pointermove', onBoardMove);
+    boardCanvas.addEventListener('pointerup', onBoardUp);
+    boardCanvas.addEventListener('pointercancel', onBoardUp);
+    boardCanvas.addEventListener('dblclick', onBoardDblClick);
+  }
+
+  // Safari (iPad + Mac trackpads) sends pinch as "gesture" events; use them for board zoom, block page zoom.
+  let gestureScale = 1;
+  const gestureOverUi = (e) => e.target && e.target.closest && e.target.closest('.desmos-embed, .side-drawer, .modal, .peek-window');
+  document.addEventListener('gesturestart', (e) => { e.preventDefault(); gestureScale = 1; }, { passive: false });
+  document.addEventListener('gesturechange', (e) => {
+    e.preventDefault();
+    const f = e.scale / gestureScale; gestureScale = e.scale;
+    if (touchPts.size >= 2 || gestureOverUi(e)) return; // finger pinch is handled above
+    const x = Number.isFinite(e.clientX) ? e.clientX : window.innerWidth / 2;
+    const y = Number.isFinite(e.clientY) ? e.clientY : window.innerHeight / 2;
+    zoomAt(x, y, f);
+  }, { passive: false });
+  document.addEventListener('gestureend', (e) => e.preventDefault(), { passive: false });
 
   /* ==================== FIXED TEXT TOOL ==================== */
   const textBox = document.getElementById('textEditorBox');
@@ -1211,41 +1445,53 @@
     return s;
   }
 
-  function snapshotDesmosComposite() {
-    if (!desmosCalc) { toast('Put Desmos on board first'); return; }
-    const exprs = desmosCalc.getExpressions().filter(e => (e.latex && e.latex.trim()) || e.type === 'table');
-    desmosCalc.asyncScreenshot({ width: 460, height: 360, showLabels: true }, (graphUrl) => {
-      const gImg = new Image();
-      gImg.onload = () => {
-        const exprW = 240, graphW = 460, H = 360;
-        const c = document.createElement('canvas');
-        c.width = exprW + graphW; c.height = H;
-        const g = c.getContext('2d');
-        g.fillStyle = '#ffffff'; g.fillRect(0, 0, c.width, H);
-        // Header for expressions column
-        g.fillStyle = '#f8f9fa'; g.fillRect(0, 0, exprW, 28);
-        g.strokeStyle = '#e5e7eb'; g.lineWidth = 1;
-        g.beginPath(); g.moveTo(0, 28); g.lineTo(exprW, 28); g.moveTo(exprW, 0); g.lineTo(exprW, H); g.stroke();
-        g.fillStyle = '#111111'; g.font = 'bold 11px Inter, sans-serif';
-        g.fillText('DESMOS EXPRESSIONS', 10, 18);
-
-        let y = 46;
-        exprs.slice(0, 11).forEach((ex, i) => {
-          g.fillStyle = ex.color || '#111111';
-          g.beginPath(); g.arc(14, y - 4, 5, 0, Math.PI * 2); g.fill();
-          g.fillStyle = '#111111';
-          g.font = '600 12px Inter, sans-serif';
-          const txt = `${i + 1}. ${formatDesmosLatex(ex)}`;
-          g.fillText(txt.slice(0, 30), 26, y);
-          if (txt.length > 30) { y += 15; g.fillText(txt.slice(30, 60), 26, y); }
-          g.strokeStyle = '#f1f5f9'; g.beginPath(); g.moveTo(6, y + 8); g.lineTo(exprW - 6, y + 8); g.stroke();
-          y += 26;
-        });
-        g.drawImage(gImg, exprW, 0, graphW, H);
-        pinImageToBoard(c.toDataURL('image/png'));
-      };
-      gImg.src = graphUrl;
+  // Draws [expression list | graph] into a canvas. Resolves null if Desmos isn't live.
+  function buildDesmosComposite(totalW = 700, H = 360, pixelRatio = 1) {
+    return new Promise((resolve) => {
+      if (!desmosCalc) return resolve(null);
+      const exprs = desmosCalc.getExpressions().filter(e => (e.latex && e.latex.trim()) || e.type === 'table');
+      const exprW = totalW >= 560 ? 240 : Math.round(totalW * 0.4);
+      const graphW = Math.max(120, Math.round(totalW - exprW));
+      const maxChars = Math.max(10, Math.floor((exprW - 32) / 7));
+      desmosCalc.asyncScreenshot({ width: graphW, height: H, showLabels: true, targetPixelRatio: pixelRatio }, (graphUrl) => {
+        const gImg = new Image();
+        gImg.onload = () => {
+          const c = document.createElement('canvas');
+          c.width = Math.round((exprW + graphW) * pixelRatio); c.height = Math.round(H * pixelRatio);
+          const g = c.getContext('2d');
+          g.scale(pixelRatio, pixelRatio);
+          g.fillStyle = '#ffffff'; g.fillRect(0, 0, exprW + graphW, H);
+          g.fillStyle = '#f8f9fa'; g.fillRect(0, 0, exprW, 28);
+          g.strokeStyle = '#e5e7eb'; g.lineWidth = 1;
+          g.beginPath(); g.moveTo(0, 28); g.lineTo(exprW, 28); g.moveTo(exprW, 0); g.lineTo(exprW, H); g.stroke();
+          g.fillStyle = '#111111'; g.font = 'bold 11px Inter, sans-serif';
+          g.fillText('DESMOS EXPRESSIONS', 10, 18);
+          let y = 46;
+          for (let i = 0; i < exprs.length && y < H - 8; i++) {
+            const ex = exprs[i];
+            g.fillStyle = ex.color || '#111111';
+            g.beginPath(); g.arc(14, y - 4, 5, 0, Math.PI * 2); g.fill();
+            g.fillStyle = '#111111';
+            g.font = '600 12px Inter, sans-serif';
+            const txt = `${i + 1}. ${formatDesmosLatex(ex)}`;
+            g.fillText(txt.slice(0, maxChars), 26, y);
+            if (txt.length > maxChars) { y += 15; g.fillText(txt.slice(maxChars, maxChars * 2), 26, y); }
+            g.strokeStyle = '#f1f5f9'; g.beginPath(); g.moveTo(6, y + 8); g.lineTo(exprW - 6, y + 8); g.stroke();
+            y += 26;
+          }
+          g.drawImage(gImg, exprW, 0, graphW, H);
+          resolve(c);
+        };
+        gImg.onerror = () => resolve(null);
+        gImg.src = graphUrl;
+      });
     });
+  }
+
+  async function snapshotDesmosComposite() {
+    if (!desmosCalc) { toast('Put Desmos on board first'); return; }
+    const c = await buildDesmosComposite(700, 360, 1);
+    if (c) pinImageToBoard(c.toDataURL('image/png'));
   }
 
   /* ==================== ON-BOARD WIDGETS ==================== */
@@ -1261,20 +1507,21 @@
       if (e.button === Number(settings.panButton)) return;
       e.stopPropagation(); drag = { mode: 'resize', sx: e.clientX, sy: e.clientY, ow: wd.w, oh: wd.h }; res.setPointerCapture(e.pointerId);
     });
-    window.addEventListener('pointermove', (e) => {
+    const onMove = (e) => {
       if (!drag) return;
       const dx = (e.clientX - drag.sx) / cam.z, dy = (e.clientY - drag.sy) / cam.z;
       if (drag.mode === 'move') { wd.x = drag.ox + dx; wd.y = drag.oy + dy; el.style.left = wd.x + 'px'; el.style.top = wd.y + 'px'; }
       else { wd.w = Math.max(220, drag.ow + dx); wd.h = Math.max(110, drag.oh + dy); el.style.width = wd.w + 'px'; el.style.height = wd.h + 'px'; if (onResize) onResize(); }
-    });
-    window.addEventListener('pointerup', () => { if (drag) { drag = null; saveWorkspace(); } });
+    };
+    const onUp = () => { if (drag) { drag = null; saveWorkspace(); broadcastBoard(); } };
+    [head, res].forEach(h => { h.addEventListener('pointermove', onMove); h.addEventListener('pointerup', onUp); h.addEventListener('pointercancel', onUp); });
   }
 
   function spawnFormulaOnBoard(formulaId) {
     const f = FORMULAS.find(x => x.id === formulaId); if (!f) return;
     const pos = screenToWorld(window.innerWidth * 0.14, window.innerHeight * 0.24);
     const wd = { id: 'bw_' + Date.now(), kind: 'formula', formulaId, x: pos.x, y: pos.y, w: 350, h: 185, scaleMode: true, baseW: 350, contentScale: 1 };
-    boardWidgets.push(wd); renderBoardWidget(wd); saveWorkspace();
+    boardWidgets.push(wd); renderBoardWidget(wd); saveWorkspace(); broadcastBoard();
     toast('Formula placed on board');
   }
 
@@ -1284,11 +1531,13 @@
     const wd = existing || { id: 'bw_desmos', kind: 'desmos', x: pos.x, y: pos.y, w: 460, h: 390 };
     if (!existing) boardWidgets.push(wd);
     renderBoardWidget(wd); saveWorkspace();
+    if (!existing) broadcastBoard();
   }
 
   function renderBoardWidget(wd) {
     const el = document.createElement('div');
     el.className = 'board-widget';
+    el._wd = wd;
     el.style.left = wd.x + 'px'; el.style.top = wd.y + 'px'; el.style.width = wd.w + 'px'; el.style.height = wd.h + 'px';
     if (wd.kind === 'formula') {
       const f = FORMULAS.find(x => x.id === wd.formulaId) || FORMULAS[0];
@@ -1332,16 +1581,16 @@
         wd.scaleMode = !wd.scaleMode;
         if (wd.scaleMode) wd.baseW = wd.w / (wd.contentScale || 1);
         applyWidgetScale();
-        saveWorkspace();
+        saveWorkspace(); broadcastBoard();
       };
       el.querySelector('.bw-scale-reset').onclick = (e) => {
         e.stopPropagation();
         wd.contentScale = 1;
         wd.baseW = wd.w;
         applyWidgetScale();
-        saveWorkspace();
+        saveWorkspace(); broadcastBoard();
       };
-      el.querySelector('.bw-close').onclick = () => { el.remove(); boardWidgets = boardWidgets.filter(x => x.id !== wd.id); saveWorkspace(); };
+      el.querySelector('.bw-close').onclick = () => { el.remove(); boardWidgets = boardWidgets.filter(x => x.id !== wd.id); saveWorkspace(); broadcastBoard(); };
 
       worldLayer.appendChild(el);
       renderMath(el);
@@ -1357,7 +1606,7 @@
         <div class="bw-body desmos-embed"><div id="desmosMount" style="width:100%;height:100%;"></div></div><div class="bw-resize"></div>`;
       el.querySelector('.bw-close').onclick = () => {
         if (desmosCalc) savedDesmosState = desmosCalc.getState();
-        desmosCalc = null; el.remove(); boardWidgets = boardWidgets.filter(x => x.id !== wd.id); saveWorkspace();
+        desmosCalc = null; el.remove(); boardWidgets = boardWidgets.filter(x => x.id !== wd.id); saveWorkspace(); broadcastBoard();
       };
       worldLayer.appendChild(el);
       const mount = el.querySelector('#desmosMount');
@@ -1367,7 +1616,9 @@
           clearIntoDegreeMode: settings.desmosAngles === 'deg',
           projectorMode: zenOn && settings.zenProj
         });
-        if (savedDesmosState) desmosCalc.setState(savedDesmosState);
+        if (savedDesmosState) desmosCalc.setState(savedDesmosState, { allowUndo: false });
+        lastDesmosJson = JSON.stringify(shareableDesmos(desmosCalc.getState()));
+        desmosCalc.observeEvent('change', onLocalDesmosChange);
       } else mount.innerHTML = '<div style="padding:18px;font-size:12px;color:#6b7280;">Offline — paste Desmos photo with Ctrl+V.</div>';
       el.querySelector('#bwSaveDesmos').onclick = () => { if (!desmosCalc) return; savedDesmosState = desmosCalc.getState(); saveWorkspace(); toast('Desmos saved'); };
       el.querySelector('#bwSnapDesmos').onclick = snapshotDesmosComposite;
@@ -1401,29 +1652,50 @@
   document.getElementById('closeDrawerBtn').onclick = closeDrawer;
 
   let filterTopic = 'ALL', filterDiff = 'all';
+  // The "collection" = whatever the question browser filters currently show.
+  function inCollection(q) {
+    const st = progress[q.id] || {};
+    if (filterTopic !== 'ALL' && q.topic !== filterTopic) return false;
+    if (filterDiff === 'starred') return !!st.starred;
+    if (filterDiff === 'wrong') return !!st.wrong;
+    if (filterDiff !== 'all' && q.difficulty !== filterDiff) return false;
+    return true;
+  }
+  function collectionIdx() { return QUESTIONS.map((q, i) => i).filter(i => inCollection(QUESTIONS[i])); }
+  function updateNavText() {
+    const col = collectionIdx();
+    const pos = col.indexOf(currentIndex);
+    document.getElementById('qNavText').textContent = `${pos === -1 ? '–' : pos + 1} / ${col.length}`;
+  }
+  function stepCollection(dir) {
+    const col = collectionIdx();
+    if (!col.length) { toast('This collection is empty'); return; }
+    let next;
+    if (dir > 0) next = col.find(i => i > currentIndex); else next = [...col].reverse().find(i => i < currentIndex);
+    if (next === undefined) next = dir > 0 ? col[0] : col[col.length - 1];
+    switchQuestion(next);
+  }
   function initTopicDropdown() {
     const topics = ['ALL', ...new Set(QUESTIONS.map(q => q.topic))];
     const sel = document.getElementById('topicSelect');
     sel.innerHTML = topics.map(t => `<option value="${t}">${t === 'ALL' ? 'All Loaded Topics (' + QUESTIONS.length + ')' : t + ' (' + QUESTIONS.filter(q => q.topic === t).length + ')'}</option>`).join('');
-    sel.onchange = (e) => { filterTopic = e.target.value; renderQuestionBrowser(); };
+    sel.onchange = (e) => { filterTopic = e.target.value; renderQuestionBrowser(); updateNavText(); };
   }
   document.getElementById('diffChips').querySelectorAll('.chip-btn').forEach(b => {
     b.onclick = () => {
       document.getElementById('diffChips').querySelectorAll('.chip-btn').forEach(x => x.classList.remove('active'));
-      b.classList.add('active'); filterDiff = b.dataset.diff; renderQuestionBrowser();
+      b.classList.add('active'); filterDiff = b.dataset.diff; renderQuestionBrowser(); updateNavText();
     };
   });
   function renderQuestionBrowser() {
     const list = document.getElementById('questionList');
-    const items = QUESTIONS.map((q, idx) => ({ q, idx })).filter(({ q }) => {
-      if (filterTopic !== 'ALL' && q.topic !== filterTopic) return false;
-      if (filterDiff === 'starred') return !!(progress[q.id] && progress[q.id].starred);
-      if (filterDiff !== 'all' && q.difficulty !== filterDiff) return false;
-      return true;
-    });
+    const items = QUESTIONS.map((q, idx) => ({ q, idx })).filter(({ q }) => inCollection(q));
+    const wrongN = QUESTIONS.filter(q => progress[q.id] && progress[q.id].wrong).length;
+    const wrongChip = document.querySelector('#diffChips .chip-btn[data-diff="wrong"]');
+    if (wrongChip) wrongChip.textContent = `✗ Wrong (${wrongN})`;
     list.innerHTML = items.map(({ q, idx }) => {
       const st = progress[q.id] || {};
-      return `<div class="q-list-item ${idx === currentIndex ? 'active' : ''}" data-qidx="${idx}"><span><strong>${q.topic}</strong> · ${q.num}</span><span>${st.starred ? '★ ' : ''}${st.solved ? '✓' : ''}</span></div>`;
+      return `<div class="q-list-item ${idx === currentIndex ? 'active' : ''}" data-qidx="${idx}"><span><strong>${q.topic}</strong> · ${q.num}</span><span>${st.wrong ? `<span style="color:#dc2626;">✗${st.wrongCount > 1 ? st.wrongCount : ''}</span> ` : ''}${st.starred ? '★ ' : ''}${st.solved ? '✓' : ''}</span></div>`;
     }).join('') || '<div style="font-size:12px;color:#6b7280;">No matching questions.</div>';
     list.querySelectorAll('.q-list-item').forEach(el => { el.onclick = () => switchQuestion(parseInt(el.dataset.qidx, 10)); });
   }
@@ -1628,16 +1900,41 @@
   })();
 
   /* ==================== EXPORT PNG ==================== */
-  document.getElementById('exportPngBtn').onclick = () => {
-    const c = document.createElement('canvas'); c.width = 1400; c.height = 950;
-    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  document.getElementById('exportPngBtn').onclick = async () => {
     const q = currentQ();
+    // Default page is 1400x950 with world (0,0) at (700,460). Grow it if strokes/widgets sit outside.
+    let minX = 0, minY = 0, maxX = 1400, maxY = 950;
+    const grow = (x, y, w, h) => {
+      if (![x, y, w, h].every(Number.isFinite)) return;
+      minX = Math.min(minX, 700 + x - 30); minY = Math.min(minY, 460 + y - 30);
+      maxX = Math.max(maxX, 700 + x + w + 30); maxY = Math.max(maxY, 460 + y + h + 30);
+    };
+    boardWidgets.forEach(wd => { if (wd.kind === 'desmos') grow(wd.x, wd.y, wd.w, wd.h); });
+    objects.forEach(o => { try { const b = getBounds(o); grow(b.x, b.y, b.w, b.h); } catch {} });
+
+    const dw = boardWidgets.find(w => w.kind === 'desmos');
+    const headH = 26;
+    const desmosImg = (dw && desmosCalc) ? await buildDesmosComposite(dw.w, Math.max(80, dw.h - headH), 2) : null;
+
+    const c = document.createElement('canvas'); c.width = Math.ceil(maxX - minX); c.height = Math.ceil(maxY - minY);
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.translate(-minX, -minY);
     g.strokeStyle = '#111'; g.lineWidth = 2; g.strokeRect(410, 140, 580, 340);
     g.fillStyle = '#111'; g.font = 'bold 13px Inter, sans-serif'; g.fillText(`${q.topic.toUpperCase()} · ${q.num}`, 430, 165);
     g.font = '15px Inter, sans-serif';
     const plain = q.prompt.replace(/\$/g, '').replace(/\\overline\{([^}]+)\}/g, '$1').replace(/\\widehat\{([^}]+)\}/g, 'arc $1').replace(/\\angle/g, '∠').replace(/\\circ/g, '°').replace(/<br>/g, ' ');
     wrapText(g, plain, 430, 200, 540, 22);
-    g.save(); g.translate(700, 460); renderBoard(g, true); g.restore();
+    g.save(); g.translate(700, 460);
+    if (dw && desmosImg) {
+      // Desmos sits under the ink, same as on screen
+      g.fillStyle = '#fff'; g.fillRect(dw.x, dw.y, dw.w, dw.h);
+      g.drawImage(desmosImg, dw.x, dw.y + headH, dw.w, dw.h - headH);
+      g.fillStyle = '#f8f9fa'; g.fillRect(dw.x, dw.y, dw.w, headH);
+      g.fillStyle = '#111'; g.font = '800 11px Inter, sans-serif'; g.fillText('📈 Desmos', dw.x + 8, dw.y + 17);
+      g.strokeStyle = '#111'; g.lineWidth = 1.5; g.strokeRect(dw.x, dw.y, dw.w, dw.h);
+    }
+    renderBoard(g, true);
+    g.restore();
     const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `sat-${q.id}.png`; a.click();
     toast('Exported PNG');
   };
@@ -1752,11 +2049,12 @@
     document.getElementById(id).onchange = () => {
       settings.smartPass = document.getElementById('setSmartPass').checked;
       settings.stylusOnly = document.getElementById('setStylusOnly').checked;
+      setPanHint();
       settings.zenProj = document.getElementById('setZenProj').checked;
       saveSettings();
     };
   });
-  document.getElementById('setPanButton').onchange = (e) => { settings.panButton = Number(e.target.value); document.getElementById('panHintText').textContent = settings.panButton === 2 ? 'Right-drag: Pan' : 'Mid-drag: Pan'; saveSettings(); };
+  document.getElementById('setPanButton').onchange = (e) => { settings.panButton = Number(e.target.value); setPanHint(); saveSettings(); };
   document.getElementById('setWheelMode').onchange = (e) => { settings.wheelMode = e.target.value; saveSettings(); };
   document.getElementById('setZoomSpeed').oninput = (e) => { settings.zoomSpeed = Number(e.target.value); document.getElementById('zoomSpeedLabel').textContent = e.target.value; saveSettings(); };
   document.getElementById('setDefaultTool').onchange = (e) => { settings.defaultTool = e.target.value; setTool(e.target.value); saveSettings(); };
@@ -1850,7 +2148,7 @@
 
     renderColorPalette();
     applyGrid(settings.defaultGrid);
-    document.getElementById('panHintText').textContent = Number(settings.panButton) === 2 ? 'Right-drag: Pan' : 'Mid-drag: Pan';
+    setPanHint();
     initTopicDropdown();
     resizeCanvas();
     await initSupabase(true);

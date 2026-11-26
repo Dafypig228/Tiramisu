@@ -127,6 +127,28 @@
     .toast { position:fixed; bottom:54px; right:16px; background:#111; color:#fff; padding:7px 12px; border-radius:8px; font-size:12px; font-weight:600; z-index:120; display:none; }
     .toast.show { display:block; }
     @media (max-width:1100px) { .toolbar-top { top:50px; max-width:calc(100vw - 20px); } }
+
+    /* ---------- iPad / touch ---------- */
+    .board-stage { height:100dvh; touch-action:none; }
+    html, body { overscroll-behavior:none; -webkit-touch-callout:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; }
+    body.touch-ui { position:fixed; inset:0; }
+    .touch-ui #boardCanvas { pointer-events:none; }
+    .touch-ui .tbtn { height:38px; min-width:38px; padding:0 9px; font-size:13px; }
+    .touch-ui .cdot { width:24px; height:24px; }
+    .touch-ui .chip-btn { padding:6px 12px; font-size:12px; }
+    .touch-ui .q-list-item { padding:11px 12px; }
+    .touch-ui .dropdown-menu button { padding:10px 12px; font-size:13px; }
+    .touch-ui .sym-btn { padding:8px 11px; font-size:15px; }
+    .touch-ui .choice-letter-hit { width:32px; height:32px; font-size:14px; }
+    .touch-ui #checkStatusChip, .touch-ui #starQuestionBtn { padding:7px 11px !important; }
+    .touch-ui .q-diagram-bar button { padding:5px 10px; }
+    .touch-ui .bw-head { padding:9px 10px; touch-action:none; }
+    .touch-ui .bw-head button { padding:4px 9px; font-size:14px; }
+    .touch-ui .bw-resize { width:28px; height:28px; touch-action:none; }
+    .touch-ui .peek-head, .touch-ui .peek-viewport { touch-action:none; }
+    .touch-ui input, .touch-ui select, .touch-ui textarea { font-size:16px; } /* <16px makes iOS zoom the page on focus */
+    @media (max-width:1100px) { .touch-ui .toolbar-top { top:62px; } .touch-ui .side-drawer { top:116px; } }
+    @media (max-width:960px) { .pill-bottom-center { bottom:62px; } .toast, .sym-bar { bottom:116px; } }
   </style>
 </head>
 <body>
@@ -260,7 +282,7 @@
     <div class="topic-chips" id="diffChips">
       <button class="chip-btn active" data-diff="all">All</button><button class="chip-btn" data-diff="easy">Easy</button>
       <button class="chip-btn" data-diff="medium">Medium</button><button class="chip-btn" data-diff="hard">Hard</button>
-      <button class="chip-btn" data-diff="starred">☆ Starred</button>
+      <button class="chip-btn" data-diff="starred">☆ Starred</button><button class="chip-btn" data-diff="wrong">✗ Wrong</button>
     </div>
     <div id="questionList" style="display:flex;flex-direction:column;gap:6px;"></div>
   </div>
@@ -386,6 +408,6 @@
 <script src="data/q_equivalent_expressions.js"></script>
 <script src="data/q_area_volume.js"></script>
 <script src="data/q_one_variable_data.js"></script>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
