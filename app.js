@@ -327,6 +327,7 @@
   function boardPayload() {
     return {
       sender: peerId, questionId: currentQ().id, objects, diagramScale, tutorLocked,
+      answer: answerState,
       boardWidgets, desmosState: shareableDesmos(desmosCalc ? desmosCalc.getState() : savedDesmosState)
     };
   }
@@ -509,10 +510,15 @@
         diagramScale = payload.diagramScale || 1;
         tutorLocked = !!payload.tutorLocked;
         if (Array.isArray(payload.boardWidgets)) applyRemoteWidgets(payload.boardWidgets, payload.desmosState);
+        if (payload.answer && payload.answer.qid === currentQ().id) { answerState = payload.answer; paintAnswer(); }
         document.getElementById('tutorLockToggle').checked = tutorLocked;
         applyDiagramScaleUI();
         renderBoard();
         await saveWorkspace();
+      })
+      .on('broadcast', { event: 'answer_state' }, ({ payload }) => {
+        if (payload.sender === peerId || !payload.state || payload.state.qid !== currentQ().id) return;
+        answerState = payload.state; paintAnswer();
       })
       .on('broadcast', { event: 'answer_check' }, ({ payload }) => {
         if (payload.sender === peerId) return;
@@ -673,12 +679,7 @@
         </div>
       `).join('');
       choicesEl.querySelectorAll('.choice-letter-hit').forEach(btn => {
-        btn.onclick = (e) => {
-          e.stopPropagation();
-          choicesEl.querySelectorAll('.choice-chip').forEach(c => c.classList.remove('selected', 'correct', 'wrong'));
-          choicesEl.querySelector(`.choice-chip[data-choice="${btn.dataset.pick}"]`).classList.add('selected');
-          picked = btn.dataset.pick;
-        };
+        btn.onclick = (e) => { e.stopPropagation(); setAnswer({ pick: btn.dataset.pick, result: null }); };
       });
     } else {
       choicesEl.style.display = 'none';
@@ -715,6 +716,38 @@
     updateStarUI(); renderQuestionBrowser(); updateNavText(); syncProfileToSupabase();
   };
 
+  // Shared answer: a picked letter (gray), and after Check green/red, show on everyone's question card.
+  let answerState = null; // { qid, pick, val, result: 'correct' | 'wrong' | null, by, byPeer }
+  const escHtml = (t) => String(t || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function paintAnswer() {
+    const q = currentQ();
+    const st = answerState && answerState.qid === q.id ? answerState : null;
+    document.querySelectorAll('#qChoices .choice-chip').forEach(c => { c.classList.remove('selected', 'correct', 'wrong'); const t = c.querySelector('.pick-by'); if (t) t.remove(); });
+    const field = document.getElementById('gridInField');
+    field.classList.remove('correct', 'wrong');
+    if (!st) return;
+    const who = st.byPeer !== peerId && st.by ? `<span class="pick-by">${escHtml(st.by)}</span>` : '';
+    if (q.type === 'mcq') {
+      picked = st.pick || null;
+      const chip = st.pick && document.querySelector(`#qChoices .choice-chip[data-choice="${st.pick}"]`);
+      if (chip) { chip.classList.add(st.result || 'selected'); if (who) chip.insertAdjacentHTML('beforeend', who); }
+    } else {
+      if (st.byPeer !== peerId || document.activeElement !== field) field.value = st.val || '';
+      if (st.result) field.classList.add(st.result);
+    }
+  }
+  function setAnswer(patch) {
+    answerState = { qid: currentQ().id, byPeer: peerId, by: document.getElementById('roomNameInput').value || 'Friend', ...patch };
+    paintAnswer();
+    if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'answer_state', payload: { sender: peerId, state: answerState } });
+  }
+  let gridSendTimer = null;
+  document.getElementById('gridInField').addEventListener('input', (e) => {
+    clearTimeout(gridSendTimer);
+    const val = e.target.value;
+    gridSendTimer = setTimeout(() => setAnswer({ val, result: null }), 300);
+  });
+
   // Wrong list: a wrong answer puts the question on it. It comes off only when the question
   // is answered correctly on the FIRST try of a later visit (so A-B-C-D guessing doesn't clear it).
   let missedThisVisit = false;
@@ -739,16 +772,16 @@
     const q = currentQ();
     if (q.type === 'mcq') {
       if (!picked) { toast('Tap letter A/B/C/D first'); return; }
-      document.querySelectorAll('.choice-chip').forEach(b => b.classList.remove('correct', 'wrong'));
-      const chip = document.querySelector(`.choice-chip[data-choice="${picked}"]`);
       const ok = picked === q.answer;
-      chip.classList.add(ok ? 'correct' : 'wrong');
+      setAnswer({ pick: picked, result: ok ? 'correct' : 'wrong' });
       recordAnswer(q, ok, picked);
     } else {
       const val = document.getElementById('gridInField').value.trim();
       if (!val) return;
       const evalNum = (s) => s.includes('/') ? (Number(s.split('/')[0]) / Number(s.split('/')[1])) : Number(s);
       const ok = Math.abs(evalNum(val) - evalNum(String(q.answer))) < 0.001;
+      clearTimeout(gridSendTimer);
+      setAnswer({ val, result: ok ? 'correct' : 'wrong' });
       recordAnswer(q, ok, val);
     }
   };
@@ -1924,7 +1957,7 @@
     ['tabFormulasBtn', 'tabDesmosBtn', 'tabPhotosBtn'].forEach(id => document.getElementById(id).classList.remove('active'));
   }
   document.getElementById('openQuestionsBtn').onclick = () => openDrawerTab('questions');
-  document.getElementById('tabFormulasBtn').onclick = () => { if (!document.getElementById('cardsBoardWidget')) spawnCardsOnBoard(); else openDrawerTab('formulas'); };
+  document.getElementById('tabFormulasBtn').onclick = () => openDrawerTab('formulas');
   document.getElementById('tabDesmosBtn').onclick = () => { if (!document.getElementById('desmosBoardWidget')) spawnDesmosOnBoard(); else openDrawerTab('desmos'); };
   document.getElementById('tabPhotosBtn').onclick = () => openDrawerTab('photos');
   Object.keys(subBtns).forEach(k => { subBtns[k].onclick = () => openDrawerTab(k); });
@@ -2409,7 +2442,7 @@
       else if (e.code === kb.eraser) setTool('eraser');
       else if (e.code === kb.text) setTool('text');
       else if (e.code === kb.zen) toggleZen();
-      else if (e.code === kb.formulas) document.getElementById('tabFormulasBtn').click();
+      else if (e.code === kb.formulas) openDrawerTab('formulas');
       else if (e.code === kb.desmos) document.getElementById('tabDesmosBtn').click();
       else if (e.code === kb.photos) openPeek(peekIdx);
     }

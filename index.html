@@ -41,6 +41,9 @@
     .choice-chip.wrong { background:#fee2e2; border-color:#dc2626; }
     .gridin-row { display:flex; gap:8px; align-items:center; }
     .gridin-input { flex:1; padding:8px 10px; border:1.5px solid #111; border-radius:8px; font-size:15px; font-weight:600; outline:none; }
+    .gridin-input.correct { border-color:#16a34a; background:#dcfce7; }
+    .gridin-input.wrong { border-color:#dc2626; background:#fee2e2; }
+    .pick-by { margin-left:auto; font-size:10px; font-weight:700; color:#6b7280; background:#f3f4f6; border-radius:999px; padding:1px 7px; white-space:nowrap; }
 
     .board-widget { position:absolute; background:#fff; border:1.5px solid #111; border-radius:10px; box-shadow:0 6px 22px rgba(0,0,0,0.09); pointer-events:auto; display:flex; flex-direction:column; overflow:hidden; }
     .bw-head { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:5px 8px; background:#f8f9fa; border-bottom:1px solid var(--border); font-size:11px; font-weight:800; cursor:move; }
@@ -469,6 +472,6 @@
 <script src="data/q_equivalent_expressions.js"></script>
 <script src="data/q_area_volume.js"></script>
 <script src="data/q_one_variable_data.js"></script>
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
