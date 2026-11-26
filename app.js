@@ -136,7 +136,12 @@
 
   /* ==================== STATE ==================== */
   let currentIndex = 0;
-  let cam = { x: window.innerWidth * 0.48, y: window.innerHeight * 0.48, z: 1 };
+  const isPhone = () => window.innerWidth <= 640;
+  function homeCam() {
+    if (isPhone()) { const z = Math.max(0.35, Math.min(1, (window.innerWidth - 14) / 600)); return { x: window.innerWidth / 2, y: 106 + 245 * z, z }; }
+    return { x: window.innerWidth * 0.48, y: window.innerHeight * 0.48, z: 1 };
+  }
+  let cam = homeCam();
   let diagramScale = 1;
   let objects = [];
   let boardWidgets = [];
@@ -375,7 +380,13 @@
     savedDesmosState = desmosState || null;
     const remoteDesmos = widgets.find(w => w.kind === 'desmos');
     const desmosEl = document.getElementById('desmosBoardWidget');
-    document.querySelectorAll('.board-widget').forEach(el => { if (el !== desmosEl) el.remove(); });
+    const keep = {};
+    document.querySelectorAll('.board-widget').forEach(el => {
+      if (el === desmosEl) return;
+      const w = el._wd, r = w && widgets.find(x => x.id === w.id);
+      if (r && el._sync && el._qid === currentQ().id && r.kind === w.kind && (w.kind !== 'formula' || r.formulaId === w.formulaId)) keep[w.id] = el;
+      else el.remove();
+    });
     const keepDesmos = !!(desmosEl && remoteDesmos && desmosCalc && desmosEl._wd);
     if (desmosEl && !keepDesmos) { desmosEl.remove(); desmosCalc = null; }
     boardWidgets = widgets;
@@ -387,6 +398,9 @@
         desmosEl.style.width = local.w + 'px'; desmosEl.style.height = local.h + 'px';
         desmosCalc.resize();
         applyDesmosState(savedDesmosState);
+      } else if (keep[wd.id]) {
+        keep[wd.id]._sync(wd);
+        boardWidgets[i] = keep[wd.id]._wd;
       } else {
         renderBoardWidget(wd);
       }
@@ -754,6 +768,8 @@
     boardStage.style.backgroundPosition = `${cam.x}px ${cam.y}px`;
     renderBoard();
     renderPeerCursors();
+    if (window.__satTextLayout) window.__satTextLayout();
+    const cw = document.getElementById('cardsBoardWidget'); if (cw && cw._localZoom) cw._localZoom();
   }
   function screenToWorld(sx, sy) { return { x: (sx - cam.x) / cam.z, y: (sy - cam.y) / cam.z }; }
   function zoomAt(sx, sy, factor) {
@@ -763,13 +779,14 @@
     applyCamera();
   }
 
-  const PASSTHROUGH_SEL = '.bw-head, .bw-resize, .desmos-embed, .q-diagram-bar, .choice-letter-hit, #checkStatusChip, #starQuestionBtn, .gridin-row, .k-interactive, .board-widget button, .board-widget input';
+  const PASSTHROUGH_SEL = '.bw-head, .bw-resize, .desmos-embed, .q-diagram-bar, .choice-letter-hit, #checkStatusChip, #starQuestionBtn, .gridin-row, .k-interactive, .board-widget button, .board-widget input, .cw-top, .cw-view';
   function updateSmartPassThrough(clientX, clientY) {
     if (touchUI || pState || rightPan || spaceHeld) return;
     if (tool === 'cursor') { boardCanvas.classList.add('pass-through'); return; }
     if (!settings.smartPass) { boardCanvas.classList.remove('pass-through'); return; }
     const els = document.elementsFromPoint(clientX, clientY);
-    const overInteractive = els.some(el => el.matches && el.matches(PASSTHROUGH_SEL));
+    const sel = tool === 'laser' ? '.bw-head, .bw-resize' : PASSTHROUGH_SEL;
+    const overInteractive = els.some(el => el.matches && el.matches(sel));
     boardCanvas.classList.toggle('pass-through', overInteractive);
   }
 
@@ -800,6 +817,22 @@
       boardStage.style.cursor = 'grabbing';
     }
   }, true);
+  // Laser works on top of Desmos / formula windows too: grab the pointer before the window sees it.
+  let laserPtr = null;
+  boardStage.addEventListener('pointerdown', (e) => {
+    if (tool !== 'laser' || e.button === Number(settings.panButton) || e.button === 1) return;
+    const t = e.target;
+    if (!t.closest || !t.closest('.board-widget') || t.closest('.bw-head, .bw-resize')) return;
+    if (touchUI && e.pointerType === 'touch' && !touchesDraw()) return;
+    e.preventDefault(); e.stopPropagation();
+    laserPtr = e.pointerId;
+    try { boardStage.setPointerCapture(e.pointerId); } catch {}
+    onBoardDown(e);
+  }, true);
+  boardStage.addEventListener('pointermove', (e) => { if (laserPtr === e.pointerId && !touchUI) onBoardMove(e); }, true);
+  const endLaserPtr = (e) => { if (laserPtr !== e.pointerId) return; laserPtr = null; if (!touchUI) onBoardUp(e); };
+  boardStage.addEventListener('pointerup', endLaserPtr, true);
+  boardStage.addEventListener('pointercancel', endLaserPtr, true);
   window.addEventListener('pointermove', (e) => {
     if (!rightPan) return;
     cam.x = e.clientX - rightPan.sx; cam.y = e.clientY - rightPan.sy; applyCamera();
@@ -809,7 +842,7 @@
   });
 
   boardStage.addEventListener('wheel', (e) => {
-    if (e.target.closest('.side-drawer') || e.target.closest('.peek-window') || e.target.closest('.desmos-embed') || e.target.closest('.modal')) return;
+    if (e.target.closest('.side-drawer') || e.target.closest('.peek-window') || e.target.closest('.desmos-embed') || e.target.closest('.modal') || e.target.closest('.board-widget .bw-body')) return;
     e.preventDefault();
     const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
     if (settings.wheelMode === 'alwaysZoom' || e.ctrlKey || e.metaKey) {
@@ -823,7 +856,7 @@
 
   document.getElementById('boardZoomOut').onclick = () => zoomAt(window.innerWidth / 2, window.innerHeight / 2, 0.86);
   document.getElementById('boardZoomIn').onclick = () => zoomAt(window.innerWidth / 2, window.innerHeight / 2, 1.16);
-  document.getElementById('boardZoomReset').onclick = () => { cam = { x: window.innerWidth * 0.48, y: window.innerHeight * 0.48, z: 1 }; applyCamera(); };
+  document.getElementById('boardZoomReset').onclick = () => { cam = homeCam(); applyCamera(); };
 
   /* ==================== DIAGRAM SCALE + LINKED INK ==================== */
   function getDiagramWorldRect() {
@@ -949,9 +982,11 @@
       return { x: minX - 5, y: minY - 5, w: Math.max(14, maxX - minX + 10), h: Math.max(14, maxY - minY + 10) };
     }
     if (o.type === 'text') {
-      const lines = (o.text || '').split('\n');
-      const maxLen = Math.max(...lines.map(l => l.length), 1);
-      return { x: o.x, y: o.y, w: Math.max(54, maxLen * (o.fontSize * 0.58) + 12), h: Math.max(26, lines.length * (o.fontSize * 1.32) + 8) };
+      const fs = o.fontSize || 19, lines = (o.text || '').split('\n');
+      const mc = getBounds._mc || (getBounds._mc = document.createElement('canvas').getContext('2d'));
+      mc.font = `600 ${fs}px Inter, sans-serif`;
+      const w = Math.max(...lines.map(l => mc.measureText(l).width), fs * 0.6);
+      return { x: o.x, y: o.y, w: w + 8, h: lines.length * fs * 1.32 + 6 };
     }
     return { x: Math.min(o.x, o.x + o.w), y: Math.min(o.y, o.y + o.h), w: Math.abs(o.w), h: Math.abs(o.h) };
   }
@@ -1003,6 +1038,7 @@
     }
 
     for (const o of objects) {
+      if (o === window.__satEditingText) continue; // being edited in the text box
       targetCtx.save();
       if (o.type === 'stroke') {
         if (o.points.length >= 2) {
@@ -1137,8 +1173,10 @@
     if (spaceHeld || e.button === 1) { pState = { mode: 'pan', sx: e.clientX - cam.x, sy: e.clientY - cam.y }; capturePtr(e); return; }
 
     if (tool === 'text') {
-      if (textBox.style.display === 'block') { commitText(); return; }
-      openText(e.clientX, e.clientY, pt); return;
+      if (textOpen()) { commitText(); return; }
+      const hit = hitTest(pt);
+      pState = { mode: 'textTap', sx: e.clientX, sy: e.clientY, hit: hit && hit.type === 'text' ? hit : null };
+      return;
     }
     if (tool === 'laser') {
       laserActive = true;
@@ -1157,7 +1195,7 @@
         if (sel && sel.type !== 'stroke') {
           const b = getBounds(sel);
           if (Math.hypot(pt.x - (b.x + b.w + 4), pt.y - (b.y + b.h + 4)) < 14 / cam.z) {
-            pushUndo(); pState = { mode: 'resize', obj: sel, sx: pt.x, sy: pt.y, ow: sel.w || b.w, oh: sel.h || b.h };
+            pushUndo(); pState = { mode: 'resize', obj: sel, sx: pt.x, sy: pt.y, ow: sel.w || b.w, oh: sel.h || b.h, ofs: sel.fontSize };
             capturePtr(e); return;
           }
         }
@@ -1196,6 +1234,11 @@
       renderBoard(); return;
     }
     if (!pState) return;
+    if (pState.mode === 'textTap') {
+      // dragging in text mode moves the board instead
+      if (Math.hypot(e.clientX - pState.sx, e.clientY - pState.sy) > 10) pState = { mode: 'pan', sx: pState.sx - cam.x, sy: pState.sy - cam.y, pointerType: pState.pointerType, pointerId: pState.pointerId };
+      return;
+    }
     if (pState.mode === 'pan') { cam.x = e.clientX - pState.sx; cam.y = e.clientY - pState.sy; applyCamera(); }
     else if (pState.mode === 'erase') { const hit = hitTest(pt); if (hit) { objects = objects.filter(o => o.id !== hit.id); renderBoard(); } }
     else if (pState.mode === 'stroke' && !pState.snapped) {
@@ -1237,7 +1280,7 @@
       renderBoard();
     } else if (pState.mode === 'resize') {
       const dx = pt.x - pState.sx, dy = pt.y - pState.sy;
-      if (pState.obj.type === 'text') pState.obj.fontSize = Math.max(12, Math.min(48, Number(settings.textSize) + Math.round(dy / 5)));
+      if (pState.obj.type === 'text') pState.obj.fontSize = Math.round(Math.max(6, Math.min(240, (pState.ofs || 19) * Math.max(0.2, (pState.oh + dy) / pState.oh))));
       else { pState.obj.w = Math.max(20, pState.ow + dx); pState.obj.h = Math.max(20, pState.oh + dy); }
       if (roomChannel && Date.now() - lastLiveStrokeSend > 65) {
         lastLiveStrokeSend = Date.now();
@@ -1249,6 +1292,7 @@
 
   function onBoardUp() {
     laserActive = false;
+    if (pState && pState.mode === 'textTap') { const p = pState; pState = null; openText(p.sx, p.sy, p.hit); return; }
     if (pState) {
       clearTimeout(pState.timer);
       const finishedObj = pState.obj;
@@ -1277,7 +1321,7 @@
   function onBoardDblClick(e) {
     const pt = screenToWorld(e.clientX, e.clientY);
     const hit = hitTest(pt);
-    if (hit && hit.type === 'text') openText(e.clientX, e.clientY, hit);
+    if (hit && hit.type === 'text' && !textOpen()) openText(e.clientX, e.clientY, hit);
   }
 
   /* ==================== TOUCH / IPAD INPUT ==================== */
@@ -1398,42 +1442,118 @@
   }, { passive: false });
   document.addEventListener('gestureend', (e) => e.preventDefault(), { passive: false });
 
-  /* ==================== FIXED TEXT TOOL ==================== */
+  /* ==================== TEXT TOOL ==================== */
+  // The box sits exactly where the text will be drawn and at the same on-screen size,
+  // so what you type is what lands on the board (at any zoom).
   const textBox = document.getElementById('textEditorBox');
   const symBar = document.getElementById('symBar');
-  let textTargetWorld = null, editingObj = null;
-
+  const measureCtx = document.createElement('canvas').getContext('2d');
+  let textTargetWorld = null, editingObj = null, textFont = 19, textColor = '#111111';
+  const textOpen = () => textBox.style.display === 'block';
+  function textWidth(str, fs) {
+    measureCtx.font = `600 ${fs}px Inter, sans-serif`;
+    return Math.max(0, ...String(str).split('\n').map(l => measureCtx.measureText(l).width));
+  }
+  function layoutText() {
+    if (!textOpen()) return;
+    const z = cam.z, fsS = textFont * z, pad = 2, bw = 1.5;
+    const sx = cam.x + textTargetWorld.x * z, sy = cam.y + textTargetWorld.y * z;
+    textBox.style.fontSize = fsS + 'px';
+    textBox.style.color = textColor;
+    const lines = Math.max(1, textBox.value.split('\n').length);
+    textBox.style.width = Math.ceil(Math.max(textWidth(textBox.value || 'Type…', fsS) + fsS * 0.7, 30)) + 'px';
+    textBox.style.height = Math.ceil(lines * fsS * 1.32) + 'px';
+    textBox.style.left = (sx + 3 * z - pad - bw) + 'px';
+    textBox.style.top = (sy + 3 * z - 0.16 * fsS - pad - bw) + 'px';
+    const vv = window.visualViewport;
+    const vTop = vv ? vv.offsetTop : 0, vH = vv ? vv.height : window.innerHeight, vLeft = vv ? vv.offsetLeft : 0;
+    const r = textBox.getBoundingClientRect(), bh = symBar.offsetHeight || 44;
+    if (isPhone()) { symBar.style.left = (vLeft + 6) + 'px'; symBar.style.top = (vTop + 6) + 'px'; }
+    else {
+      symBar.style.left = Math.max(6, Math.min(r.left, window.innerWidth - symBar.offsetWidth - 6)) + 'px';
+      const above = r.top - bh - 8;
+      symBar.style.top = (above > vTop + 6 ? above : Math.min(r.bottom + 8, vTop + vH - bh - 6)) + 'px';
+    }
+  }
+  window.__satTextLayout = layoutText;
+  // Keep the text you're typing above the on-screen keyboard (moves the board, not the page).
+  function keepTextVisible() {
+    if (!textOpen()) return;
+    const vv = window.visualViewport;
+    const r = textBox.getBoundingClientRect();
+    const bottom = (vv ? vv.offsetTop + vv.height : window.innerHeight) - 14;
+    const top = (vv ? vv.offsetTop : 0) + (isPhone() ? 62 : 14);
+    let dy = 0;
+    if (r.bottom > bottom) dy = bottom - r.bottom; else if (r.top < top) dy = top - r.top;
+    if (dy) { cam.y += dy; applyCamera(); } else layoutText();
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', keepTextVisible);
+    window.visualViewport.addEventListener('scroll', layoutText);
+  }
   function openText(sx, sy, existing = null) {
-    editingObj = existing;
-    textTargetWorld = existing ? { x: existing.x, y: existing.y } : screenToWorld(sx, sy);
-    textBox.style.left = Math.min(window.innerWidth - 180, Math.max(12, sx)) + 'px';
-    textBox.style.top = Math.min(window.innerHeight - 100, Math.max(54, sy)) + 'px';
-    textBox.style.color = existing ? existing.color : inkColor;
-    textBox.style.fontSize = (existing ? existing.fontSize : settings.textSize) + 'px';
-    textBox.value = existing ? existing.text : '';
-    textBox.style.display = 'block';
-    symBar.classList.add('show');
-    setTimeout(() => textBox.focus(), 0);
+    editingObj = existing || null;
+    window.__satEditingText = editingObj;
+    if (editingObj) {
+      textTargetWorld = { x: editingObj.x, y: editingObj.y };
+      textFont = editingObj.fontSize || 19; textColor = editingObj.color || '#111111'; textBox.value = editingObj.text || '';
+    } else {
+      textFont = Math.round(Math.max(8, Math.min(160, (Number(settings.textSize) || 19) / cam.z)));
+      const p = screenToWorld(sx, sy);
+      textTargetWorld = { x: p.x - 3, y: p.y - textFont * 0.75 }; // the tap lands in the middle of the first line
+      textColor = inkColor; textBox.value = '';
+    }
+    textBox.style.display = 'block'; symBar.classList.add('show');
+    layoutText(); renderBoard();
+    try { textBox.focus({ preventScroll: true }); } catch { textBox.focus(); }
+    const n = textBox.value.length; textBox.setSelectionRange(n, n);
+    setTimeout(keepTextVisible, 350);
+  }
+  function closeText() {
+    textBox.style.display = 'none'; symBar.classList.remove('show');
+    window.__satEditingText = null; editingObj = null;
+    if (document.activeElement === textBox) textBox.blur();
   }
   function commitText() {
-    if (textBox.style.display !== 'block') return;
-    const val = textBox.value.trim();
-    textBox.value = ''; textBox.style.display = 'none'; symBar.classList.remove('show');
-    if (val) {
+    if (!textOpen()) return;
+    const val = textBox.value.replace(/\s+$/, '');
+    const ed = editingObj;
+    closeText();
+    if (ed) {
+      if (!val.trim()) { pushUndo(); objects = objects.filter(o => o !== ed); }
+      else if (val !== ed.text || textFont !== ed.fontSize) { pushUndo(); ed.text = val; ed.fontSize = textFont; }
+      else { renderBoard(); return; }
+    } else {
+      if (!val.trim()) { renderBoard(); return; }
       pushUndo();
-      if (editingObj) editingObj.text = val;
-      else objects.push({ id: 'o_' + Date.now(), type: 'text', x: textTargetWorld.x, y: textTargetWorld.y, text: val, fontSize: Number(settings.textSize) || 19, color: inkColor });
-      renderBoard(); saveWorkspace(); broadcastBoard();
+      objects.push({ id: 'o_' + Date.now(), type: 'text', x: textTargetWorld.x, y: textTargetWorld.y, text: val, fontSize: textFont, color: textColor });
     }
-    editingObj = null;
+    renderBoard(); saveWorkspace(); broadcastBoard();
   }
-  document.getElementById('doneTextBtn').onclick = commitText;
-  symBar.querySelectorAll('.sym-btn').forEach(b => {
-    b.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      const s = textBox.selectionStart, end = textBox.selectionEnd;
-      textBox.value = textBox.value.slice(0, s) + b.dataset.sym + textBox.value.slice(end);
-      textBox.selectionStart = textBox.selectionEnd = s + b.dataset.sym.length;
+  function cancelText() { closeText(); renderBoard(); }
+  textBox.addEventListener('input', layoutText);
+  textBox.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // no tool shortcuts while typing
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); commitText(); }
+    else if (e.key === 'Escape') { e.preventDefault(); commitText(); }
+  });
+  textBox.addEventListener('keyup', (e) => e.stopPropagation());
+  function insertAtCaret(str) {
+    const a = textBox.selectionStart ?? textBox.value.length, b = textBox.selectionEnd ?? a;
+    textBox.value = textBox.value.slice(0, a) + str + textBox.value.slice(b);
+    textBox.setSelectionRange(a + str.length, a + str.length);
+    layoutText();
+  }
+  symBar.querySelectorAll('button').forEach(b => {
+    b.addEventListener('pointerdown', (e) => e.preventDefault()); // keep the keyboard / caret in the text box
+    b.addEventListener('mousedown', (e) => e.preventDefault());
+    b.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (b.id === 'doneTextBtn') return commitText();
+      if (b.id === 'cancelTextBtn') return cancelText();
+      if (b.dataset.size) { textFont = Math.round(Math.max(8, Math.min(240, textFont * (b.dataset.size === '1' ? 1.2 : 1 / 1.2)))); layoutText(); }
+      else if (b.dataset.sym) insertAtCaret(b.dataset.sym);
+      if (document.activeElement !== textBox) { try { textBox.focus({ preventScroll: true }); } catch { textBox.focus(); } }
     });
   });
 
@@ -1567,17 +1687,121 @@
 
   function spawnDesmosOnBoard(existing = null) {
     if (document.getElementById('desmosBoardWidget')) { toast('Desmos already on board'); return; }
-    const pos = screenToWorld(window.innerWidth * 0.56, window.innerHeight * 0.16);
-    const wd = existing || { id: 'bw_desmos', kind: 'desmos', x: pos.x, y: pos.y, w: 460, h: 390 };
+    const pos = isPhone() ? screenToWorld(8, 112) : screenToWorld(window.innerWidth * 0.56, window.innerHeight * 0.16);
+    const wd = existing || { id: 'bw_desmos', kind: 'desmos', x: pos.x, y: pos.y, w: isPhone() ? (window.innerWidth - 16) / cam.z : 460, h: isPhone() ? Math.min(460, window.innerHeight * 0.5) / cam.z : 390 };
     if (!existing) boardWidgets.push(wd);
     renderBoardWidget(wd); saveWorkspace();
     if (!existing) broadcastBoard();
+  }
+
+  // Shared "Formulas" window: what one person opens (topic, card, scroll, unit-circle angle) shows for everyone in the room.
+  const TOPIC_NAMES = { linear: 'Linear', advanced: 'Advanced', ratios: 'Ratios & %', data: 'Data & Prob', geometry: 'Geometry', trig: 'Trig', circles: 'Circles', desmos: 'Desmos', strategy: 'Strategy' };
+  function spawnCardsOnBoard() {
+    if (document.getElementById('cardsBoardWidget')) { toast('Formulas window already on board'); return; }
+    const pos = isPhone() ? screenToWorld(8, 112) : screenToWorld(window.innerWidth * 0.03, window.innerHeight * 0.14);
+    const wd = { id: 'bw_cards', kind: 'cards', x: pos.x, y: pos.y,
+      w: isPhone() ? (window.innerWidth - 16) / cam.z : 420, h: isPhone() ? (window.innerHeight - 240) / cam.z : 600,
+      topic: 'task', q: '', cardId: null, scroll: 0, uc: null };
+    boardWidgets = boardWidgets.filter(w => w.id !== 'bw_cards');
+    boardWidgets.push(wd); renderBoardWidget(wd); saveWorkspace(); broadcastBoard();
+  }
+  function renderCardsWidget(el, wd) {
+    el.id = 'cardsBoardWidget';
+    el.innerHTML = `
+      <div class="bw-head"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📐 Formulas · shared</span><div style="display:flex;gap:3px;"><button class="bw-close" title="Close">✕</button></div></div>
+      <div class="bw-body cw">
+        <div class="cw-top">
+          <div class="cw-row1"><button class="cw-btn" data-cw="list" title="Back to the list">☰</button><button class="cw-btn" data-cw="prev" title="Previous card">‹</button><span class="cw-pos"></span><button class="cw-btn" data-cw="next" title="Next card">›</button><input class="cw-search" type="text" placeholder="Search cards…" /></div>
+          <div class="cw-chips">${document.getElementById('topicChips').innerHTML}</div>
+        </div>
+        <div class="cw-view"><div class="cw-zoom"></div></div>
+      </div>
+      <div class="bw-resize"></div>`;
+    const box = el.querySelector('.cw-zoom');
+    // Phones see the board zoomed out: enlarge this window's text locally so it stays readable (not shared).
+    el._localZoom = () => {
+      const z = isPhone() ? Math.max(1, Math.min(2.2, 0.9 / cam.z)) : 1;
+      box.style.zoom = z; el.querySelector('.cw-top').style.zoom = z; el.querySelector('.bw-head').style.zoom = z;
+    };
+    const view = el.querySelector('.cw-view'), search = el.querySelector('.cw-search'), posEl = el.querySelector('.cw-pos');
+    let applyingScroll = false, sendTimer = null;
+    const share = (delay = 0) => { clearTimeout(sendTimer); sendTimer = setTimeout(() => { saveWorkspace(); broadcastBoard(); }, delay); };
+    const items = () => filterCards(wd.topic || 'task', wd.q || '');
+    const setScroll = () => {
+      applyingScroll = true;
+      const max = view.scrollHeight - view.clientHeight;
+      view.scrollTop = max > 0 ? (wd.scroll || 0) * max : 0;
+      setTimeout(() => { applyingScroll = false; }, 80);
+    };
+    const open = (id) => { wd.cardId = id; wd.scroll = 0; wd.uc = null; draw(); share(); };
+    function draw() {
+      const list = items();
+      el.querySelectorAll('.cw-chips .chip-btn').forEach(b => b.classList.toggle('active', !wd.q && b.dataset.topic === (wd.topic || 'task')));
+      if (document.activeElement !== search) search.value = wd.q || '';
+      const f = wd.cardId ? cardById(wd.cardId) : null;
+      const idx = f ? list.findIndex(x => x.id === f.id) : -1;
+      el.querySelector('[data-cw="list"]').disabled = !f;
+      el.querySelector('[data-cw="prev"]').disabled = !list.length || idx <= 0;
+      el.querySelector('[data-cw="next"]').disabled = !list.length || (f ? idx === list.length - 1 || idx < 0 : false);
+      posEl.textContent = f ? (idx >= 0 ? `${idx + 1} / ${list.length}` : '') : `${list.length} cards`;
+      if (f && CK && CK.isV2(f)) {
+        box.innerHTML = CK.render(f, 'board');
+        CK.hydrate(view.querySelector('.k-card'), f, { renderMath, putInDesmos, widgetState: wd.uc, onWidgetState: (st) => { wd.uc = st; share(); } });
+      } else {
+        box.innerHTML = list.length
+          ? list.map(x => `<button class="cw-item" data-id="${x.id}"><span>${x.title}</span><small>${TOPIC_NAMES[x.topic] || x.topic || ''}</small></button>`).join('')
+          : `<div class="cw-empty">${wd.topic === 'task' && !wd.q ? 'No cards linked to this question. Try All or search.' : 'No match.'}</div>`;
+        view.querySelectorAll('.cw-item').forEach(b => { b.onclick = (e) => { e.stopPropagation(); open(b.dataset.id); }; });
+        renderMath(view);
+      }
+      setScroll(); requestAnimationFrame(setScroll);
+    }
+    el.querySelectorAll('.cw-chips .chip-btn').forEach(b => {
+      b.onclick = (e) => { e.stopPropagation(); wd.topic = b.dataset.topic; wd.q = ''; wd.cardId = null; wd.scroll = 0; wd.uc = null; draw(); share(); };
+    });
+    search.addEventListener('input', () => { wd.q = search.value; wd.cardId = null; wd.scroll = 0; wd.uc = null; draw(); share(450); });
+    search.addEventListener('keydown', (e) => e.stopPropagation());
+    search.addEventListener('keyup', (e) => e.stopPropagation());
+    el.querySelector('[data-cw="list"]').onclick = (e) => { e.stopPropagation(); wd.cardId = null; wd.scroll = 0; wd.uc = null; draw(); share(); };
+    const step = (d) => {
+      const list = items(); if (!list.length) return;
+      let i = list.findIndex(x => x.id === wd.cardId);
+      i = i < 0 ? (d > 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, i + d));
+      open(list[i].id);
+    };
+    el.querySelector('[data-cw="prev"]').onclick = (e) => { e.stopPropagation(); step(-1); };
+    el.querySelector('[data-cw="next"]').onclick = (e) => { e.stopPropagation(); step(1); };
+    view.addEventListener('scroll', () => {
+      if (applyingScroll) return;
+      const max = view.scrollHeight - view.clientHeight;
+      wd.scroll = max > 0 ? Math.round(view.scrollTop / max * 1000) / 1000 : 0;
+      share(250);
+    }, { passive: true });
+    el.querySelector('.bw-close').onclick = () => { el.remove(); boardWidgets = boardWidgets.filter(x => x.id !== wd.id); saveWorkspace(); broadcastBoard(); };
+    worldLayer.appendChild(el);
+    el._localZoom();
+    draw();
+    makeWidgetInteractive(el, wd, () => setScroll());
+    el._sync = (nw) => {
+      const key = JSON.stringify([wd.topic, wd.q, wd.cardId]), ucKey = JSON.stringify(wd.uc || null), sc = wd.scroll;
+      Object.assign(wd, nw);
+      el.style.left = wd.x + 'px'; el.style.top = wd.y + 'px'; el.style.width = wd.w + 'px'; el.style.height = wd.h + 'px';
+      if (JSON.stringify([wd.topic, wd.q, wd.cardId]) !== key) { draw(); return; }
+      if (JSON.stringify(wd.uc || null) !== ucKey) { const m = view.querySelector('.k-widget'); if (m && m._setState) m._setState(wd.uc); }
+      if (wd.scroll !== sc) setScroll();
+    };
   }
 
   function renderBoardWidget(wd) {
     const el = document.createElement('div');
     el.className = 'board-widget';
     el._wd = wd;
+    el._qid = currentQ().id;
+    if (wd.kind === 'cards') {
+      el.style.left = wd.x + 'px'; el.style.top = wd.y + 'px'; el.style.width = wd.w + 'px'; el.style.height = wd.h + 'px';
+      renderCardsWidget(el, wd);
+      return;
+    }
     el.style.left = wd.x + 'px'; el.style.top = wd.y + 'px'; el.style.width = wd.w + 'px'; el.style.height = wd.h + 'px';
     if (wd.kind === 'formula') {
       const f = cardById(wd.formulaId) || FORMULAS[0];
@@ -1640,10 +1864,17 @@
       el.querySelector('.bw-close').onclick = () => { el.remove(); boardWidgets = boardWidgets.filter(x => x.id !== wd.id); saveWorkspace(); broadcastBoard(); };
 
       worldLayer.appendChild(el);
-      if (CK && CK.isV2(f)) CK.hydrate(el.querySelector('.k-card'), f, cardApi());
+      if (CK && CK.isV2(f)) CK.hydrate(el.querySelector('.k-card'), f, Object.assign(cardApi(), { widgetState: wd.uc, onWidgetState: (st) => { wd.uc = st; saveWorkspace(); broadcastBoard(); } }));
       renderMath(el);
       applyWidgetScale();
       makeWidgetInteractive(el, wd, applyWidgetScale);
+      el._sync = (nw) => {
+        const ucKey = JSON.stringify(wd.uc || null);
+        Object.assign(wd, nw);
+        el.style.left = wd.x + 'px'; el.style.top = wd.y + 'px'; el.style.width = wd.w + 'px'; el.style.height = wd.h + 'px';
+        applyWidgetScale();
+        if (JSON.stringify(wd.uc || null) !== ucKey) { const m = el.querySelector('.k-widget'); if (m && m._setState) m._setState(wd.uc); }
+      };
     } else if (wd.kind === 'desmos') {
       el.id = 'desmosBoardWidget';
       el.innerHTML = `
@@ -1693,7 +1924,7 @@
     ['tabFormulasBtn', 'tabDesmosBtn', 'tabPhotosBtn'].forEach(id => document.getElementById(id).classList.remove('active'));
   }
   document.getElementById('openQuestionsBtn').onclick = () => openDrawerTab('questions');
-  document.getElementById('tabFormulasBtn').onclick = () => openDrawerTab('formulas');
+  document.getElementById('tabFormulasBtn').onclick = () => { if (!document.getElementById('cardsBoardWidget')) spawnCardsOnBoard(); else openDrawerTab('formulas'); };
   document.getElementById('tabDesmosBtn').onclick = () => { if (!document.getElementById('desmosBoardWidget')) spawnDesmosOnBoard(); else openDrawerTab('desmos'); };
   document.getElementById('tabPhotosBtn').onclick = () => openDrawerTab('photos');
   Object.keys(subBtns).forEach(k => { subBtns[k].onclick = () => openDrawerTab(k); });
@@ -1749,17 +1980,21 @@
   }
 
   let formulaTopic = 'task';
-  function renderFormulas() {
-    const q = document.getElementById('formulaSearch').value.trim().toLowerCase();
-    const list = document.getElementById('formulaList');
+  function filterCards(topic, query) {
+    const q = (query || '').trim().toLowerCase();
     const matchedIds = currentQ().formulas || [];
     const items = FORMULAS.filter(f => {
       if (q) return CK && CK.isV2(f) ? CK.searchText(f).includes(q) : (f.title + f.note + f.math + f.topic).toLowerCase().includes(q);
-      if (formulaTopic === 'task') return matchedIds.includes(f.id);
-      if (formulaTopic === 'all') return true;
-      return f.topic === formulaTopic;
+      if (topic === 'task') return matchedIds.includes(f.id);
+      if (topic === 'all') return true;
+      return f.topic === topic;
     });
-    if (formulaTopic === 'task') items.sort((a, b) => matchedIds.indexOf(a.id) - matchedIds.indexOf(b.id));
+    if (!q && topic === 'task') items.sort((a, b) => matchedIds.indexOf(a.id) - matchedIds.indexOf(b.id));
+    return items;
+  }
+  function renderFormulas() {
+    const list = document.getElementById('formulaList');
+    const items = filterCards(formulaTopic, document.getElementById('formulaSearch').value);
 
     list.innerHTML = '';
     if (!items.length) {
@@ -1880,7 +2115,7 @@
 
   document.getElementById('soloModeBtn').onclick = () => {
     soloMode = !soloMode; soloRevealed = false;
-    document.getElementById('soloModeBtn').textContent = soloMode ? '🧑‍🎓 Solo: ON' : '🧑‍🎓 Solo: OFF';
+    document.getElementById('soloState').textContent = soloMode ? 'ON' : 'OFF';
     document.getElementById('soloModeBtn').classList.toggle('active', soloMode);
     renderPhotos();
   };
@@ -2174,7 +2409,7 @@
       else if (e.code === kb.eraser) setTool('eraser');
       else if (e.code === kb.text) setTool('text');
       else if (e.code === kb.zen) toggleZen();
-      else if (e.code === kb.formulas) openDrawerTab('formulas');
+      else if (e.code === kb.formulas) document.getElementById('tabFormulasBtn').click();
       else if (e.code === kb.desmos) document.getElementById('tabDesmosBtn').click();
       else if (e.code === kb.photos) openPeek(peekIdx);
     }

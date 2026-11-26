@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>SAT Math Whiteboard</title>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
@@ -81,9 +81,13 @@
     .dropdown-menu button { text-align:left; border:none; background:transparent; color:var(--ink); padding:6px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; }
     .dropdown-menu button:hover { background:#111; color:#fff; }
 
-    #textEditorBox { position:fixed; display:none; min-width:140px; min-height:36px; padding:4px 6px; font-family:Inter,sans-serif; font-size:19px; font-weight:600; color:#111; background:rgba(255,255,255,0.96); border:1.5px solid #111; border-radius:6px; outline:none; resize:both; z-index:55; }
-    .sym-bar { position:fixed; bottom:54px; left:50%; transform:translateX(-50%); background:#fff; border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); padding:5px 8px; display:none; gap:4px; flex-wrap:wrap; z-index:55; }
+    /* Text tool: the box sits exactly where the text will be drawn, at the same on-screen size. */
+    #textEditorBox { position:fixed; display:none; margin:0; padding:2px; font-family:Inter,sans-serif; font-weight:600; line-height:1.32; color:#111; background:rgba(255,255,255,0.88); border:1.5px dashed #2563eb; border-radius:4px; outline:none; resize:none; overflow:hidden; white-space:pre; z-index:55; min-width:30px; box-sizing:content-box; }
+    #textEditorBox::placeholder { color:#9ca3af; }
+    .sym-bar { position:fixed; background:#fff; border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); padding:4px 6px; display:none; gap:3px; flex-wrap:nowrap; align-items:center; overflow-x:auto; max-width:calc(100vw - 12px); z-index:56; scrollbar-width:none; }
+    .sym-bar::-webkit-scrollbar { display:none; }
     .sym-bar.show { display:flex; }
+    .sym-bar .sym-btn, .sym-bar .tbtn { flex-shrink:0; }
     .sym-btn { border:1px solid var(--border); background:#f9fafb; color:#111; border-radius:6px; padding:4px 8px; font-size:13px; font-weight:600; cursor:pointer; }
     .sym-btn:hover { background:#111; color:#fff; }
 
@@ -126,7 +130,7 @@
     .keybind-btn.listening { background:#111; color:#fff; }
     .toast { position:fixed; bottom:54px; right:16px; background:#111; color:#fff; padding:7px 12px; border-radius:8px; font-size:12px; font-weight:600; z-index:120; display:none; }
     .toast.show { display:block; }
-    @media (max-width:1100px) { .toolbar-top { top:50px; max-width:calc(100vw - 20px); } }
+    @media (max-width:1460px) { .toolbar-top { top:56px; max-width:calc(100vw - 20px); } .side-drawer { top:104px; } }
 
     /* ---------- iPad / touch ---------- */
     .board-stage { height:100dvh; touch-action:none; }
@@ -139,6 +143,8 @@
     .touch-ui .q-list-item { padding:11px 12px; }
     .touch-ui .dropdown-menu button { padding:10px 12px; font-size:13px; }
     .touch-ui .sym-btn { padding:8px 11px; font-size:15px; }
+    .touch-ui .sym-btn:hover { background:#f9fafb; color:#111; }
+    .touch-ui .sym-btn:active { background:#111; color:#fff; }
     .touch-ui .choice-letter-hit { width:32px; height:32px; font-size:14px; }
     .touch-ui #checkStatusChip, .touch-ui #starQuestionBtn { padding:7px 11px !important; }
     .touch-ui .q-diagram-bar button { padding:5px 10px; }
@@ -147,8 +153,56 @@
     .touch-ui .bw-resize { width:28px; height:28px; touch-action:none; }
     .touch-ui .peek-head, .touch-ui .peek-viewport { touch-action:none; }
     .touch-ui input, .touch-ui select, .touch-ui textarea { font-size:16px; } /* <16px makes iOS zoom the page on focus */
-    @media (max-width:1100px) { .touch-ui .toolbar-top { top:62px; } .touch-ui .side-drawer { top:116px; } }
-    @media (max-width:960px) { .pill-bottom-center { bottom:62px; } .toast, .sym-bar { bottom:116px; } }
+    @media (max-width:1460px) { .touch-ui .toolbar-top { top:62px; } .touch-ui .side-drawer { top:116px; } }
+    @media (max-width:960px) { .pill-bottom-center { bottom:62px; } .toast { bottom:116px; } }
+
+    /* ---------- shared Formulas window on the board ---------- */
+    .cw { display:flex; flex-direction:column; min-height:0; }
+    .cw-top { padding:6px 8px; border-bottom:1px solid var(--border); display:flex; flex-direction:column; gap:5px; background:#fff; }
+    .cw-row1 { display:flex; gap:4px; align-items:center; }
+    .cw-btn { border:1px solid var(--border); background:#fff; color:#111; border-radius:7px; height:28px; min-width:30px; padding:0 8px; font-size:13px; font-weight:700; cursor:pointer; flex-shrink:0; }
+    .cw-btn:hover { background:#111; color:#fff; }
+    .cw-btn:disabled { opacity:0.35; cursor:default; background:#fff; color:#111; }
+    .cw-pos { font-size:11px; color:var(--muted); font-weight:700; min-width:38px; text-align:center; flex-shrink:0; }
+    .cw-search { flex:1; min-width:0; height:28px; padding:0 8px; border:1px solid #d1d5db; border-radius:7px; font-size:12px; }
+    .cw-chips { display:flex; gap:4px; flex-wrap:wrap; }
+    .cw-chips::-webkit-scrollbar { display:none; }
+    .cw-chips .chip-btn { flex-shrink:0; }
+    .cw-view { flex:1; overflow-y:auto; overflow-x:hidden; padding:8px; touch-action:pan-y; user-select:text; }
+    .cw-zoom { display:flex; flex-direction:column; gap:5px; }
+    .board-widget .bw-body { touch-action:pan-y; }
+    .cw-item { display:flex; justify-content:space-between; align-items:center; gap:8px; text-align:left; border:1px solid var(--border); background:#fff; color:#111; border-radius:8px; padding:8px 10px; font-size:12.5px; font-weight:700; cursor:pointer; flex-shrink:0; }
+    .cw-item:hover { border-color:#111; }
+    .cw-item small { font-weight:600; color:var(--muted); font-size:10.5px; text-transform:uppercase; flex-shrink:0; }
+    .cw-empty { font-size:12px; color:var(--muted); padding:6px 2px; }
+    .touch-ui .cw-btn { height:34px; min-width:36px; }
+    .touch-ui .cw-search { height:34px; }
+    .touch-ui .cw-item { padding:11px 12px; }
+
+    /* ---------- phones ---------- */
+    .sh { display:none; }
+    @media (max-width:640px) {
+      .lbl, .ph-hide { display:none !important; }
+      .sh { display:inline; }
+      :root .tbtn { height:36px; min-width:34px; padding:0 6px; font-size:13px; }
+      :root .cdot { width:22px; height:22px; }
+      :root .pill { gap:2px; padding:3px; border-radius:12px; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
+      :root .pill::-webkit-scrollbar { display:none; }
+      :root .pill-left { top:calc(6px + env(safe-area-inset-top)); left:6px; right:auto; max-width:calc(100vw - 12px); }
+      :root .pill-right { top:calc(52px + env(safe-area-inset-top)); left:6px; right:auto; max-width:calc(60vw); }
+      :root .pill-bottom-right { top:calc(52px + env(safe-area-inset-top)); bottom:auto; right:6px; max-width:calc(40vw - 16px); }
+      :root .toolbar-top { top:auto !important; bottom:calc(6px + env(safe-area-inset-bottom)); left:6px; right:6px; transform:none; max-width:none; justify-content:space-between; }
+      :root .pill-bottom-center { bottom:calc(52px + env(safe-area-inset-bottom)) !important; left:6px; transform:none; padding:3px 6px; gap:4px; max-width:calc(100vw - 130px); }
+      :root .pill-bottom-left { bottom:calc(52px + env(safe-area-inset-bottom)); left:auto; right:6px; }
+      :root .dropdown { position:static; }
+      :root .dropdown-menu { position:fixed; top:auto; bottom:calc(100px + env(safe-area-inset-bottom)); left:6px; }
+      :root .side-drawer { top:calc(98px + env(safe-area-inset-top)) !important; left:6px; right:6px; bottom:calc(6px + env(safe-area-inset-bottom)); width:auto; max-width:none; }
+      :root .toast { bottom:calc(100px + env(safe-area-inset-bottom)); left:12px; right:12px; text-align:center; }
+      body #exitZenBtn { top:calc(6px + env(safe-area-inset-top)); right:6px; }
+      .peek-window { left:6px !important; width:calc(100vw - 12px) !important; }
+      .modal-backdrop { padding:6px; }
+      .modal { max-height:92vh; }
+    }
   </style>
 </head>
 <body>
@@ -190,21 +244,21 @@
   <button class="tbtn" id="nextQBtn">▶</button>
   <span class="tsep"></span>
   <button class="tbtn" id="openRoomBtn">🌐 <span id="roomBadgeText">Room</span></button>
-  <button class="tbtn" id="zenBtn">👁️ Zen</button>
+  <button class="tbtn" id="zenBtn" title="Zen">👁️<span class="lbl"> Zen</span></button>
 </div>
 <button class="pill tbtn" id="exitZenBtn" style="padding:6px 12px;border:1px solid #111;">✕ Exit Zen</button>
 
 <div class="pill toolbar-top" id="mainToolbar">
-  <button class="tbtn" data-tool="cursor" title="Cursor (1)">🖱️ Cursor</button>
-  <button class="tbtn" data-tool="select" title="Select (V)">⬚ Select</button>
+  <button class="tbtn" data-tool="cursor" title="Cursor (1)">🖱️<span class="lbl"> Cursor</span></button>
+  <button class="tbtn" data-tool="select" title="Select (V)">⬚<span class="lbl"> Select</span></button>
   <span class="tsep"></span>
-  <button class="tbtn active" data-tool="pen" title="Pen (P)">✏️ Pen</button>
-  <button class="tbtn" data-tool="highlighter" title="Highlighter (H)">🖍️ High</button>
-  <button class="tbtn" data-tool="laser" title="Laser (L)">🔴 Laser</button>
-  <button class="tbtn" data-tool="eraser" title="Stroke Eraser (E)">🧽 Erase</button>
+  <button class="tbtn active" data-tool="pen" title="Pen (P)">✏️<span class="lbl"> Pen</span></button>
+  <button class="tbtn" data-tool="highlighter" title="Highlighter (H)">🖍️<span class="lbl"> High</span></button>
+  <button class="tbtn" data-tool="laser" title="Laser (L)">🔴<span class="lbl"> Laser</span></button>
+  <button class="tbtn" data-tool="eraser" title="Stroke Eraser (E)">🧽<span class="lbl"> Erase</span></button>
   <span class="tsep"></span>
   <div class="dropdown">
-    <button class="tbtn" id="shapesBtn">📐 Shapes ▾</button>
+    <button class="tbtn" id="shapesBtn" title="Shapes">📐<span class="lbl"> Shapes</span> ▾</button>
     <div class="dropdown-menu" id="shapesMenu">
       <button data-shape="line">╱ Line (drag)</button>
       <button data-shape="dashed">┄ Dashed Line (drag)</button>
@@ -216,54 +270,56 @@
       <button data-stamp="axes">Stamp: x-y Axes</button>
     </div>
   </div>
-  <button class="tbtn active" id="snapBtn">✨ Snap</button>
-  <button class="tbtn" data-tool="text" title="Text (T)">T Text</button>
+  <button class="tbtn active" id="snapBtn" title="Snap shapes">✨<span class="lbl"> Snap</span></button>
+  <button class="tbtn" data-tool="text" title="Text (T)"><b style="font-family:Georgia,serif;">T</b><span class="lbl"> Text</span></button>
 </div>
 
 <div class="pill pill-right hide-in-zen">
-  <button class="tbtn" id="tabFormulasBtn">📐 Formulas</button>
-  <button class="tbtn" id="tabDesmosBtn">📈 Desmos</button>
-  <button class="tbtn" id="tabPhotosBtn">🖼️ Photos (<span id="photoCount">0</span>)</button>
+  <button class="tbtn" id="tabFormulasBtn" title="Formulas window (shared)">📐<span class="lbl"> Formulas</span></button>
+  <button class="tbtn" id="tabDesmosBtn" title="Desmos (shared)">📈<span class="lbl"> Desmos</span></button>
+  <button class="tbtn" id="tabPhotosBtn" title="Photos">🖼️<span class="lbl"> Photos</span> (<span id="photoCount">0</span>)</button>
   <span class="tsep"></span>
-  <button class="tbtn" id="exportPngBtn">🖼️ PNG</button>
+  <button class="tbtn" id="exportPngBtn" title="Download board as PNG"><span class="lbl">⬇ </span>PNG</button>
   <button class="tbtn" id="openSettingsBtn">⚙️</button>
 </div>
 
 <div class="pill pill-bottom-left hide-in-zen">
-  <button class="tbtn" id="boardZoomOut">−</button>
-  <button class="tbtn" id="boardZoomReset">100%</button>
-  <button class="tbtn" id="boardZoomIn">+</button>
-  <span class="tsep"></span>
+  <button class="tbtn ph-hide" id="boardZoomOut">−</button>
+  <button class="tbtn ph-hide" id="boardZoomReset">100%</button>
+  <button class="tbtn ph-hide" id="boardZoomIn">+</button>
+  <span class="tsep ph-hide"></span>
   <button class="tbtn" id="undoBtn">↩</button>
   <button class="tbtn" id="redoBtn">↪</button>
-  <button class="tbtn" id="gridBtn">▦</button>
+  <button class="tbtn ph-hide" id="gridBtn">▦</button>
   <button class="tbtn" id="clearAllBtn">🗑️</button>
 </div>
 
 <div class="pill pill-bottom-center" id="inkStyleBar">
   <div id="colorPaletteMount" style="display:flex;gap:5px;align-items:center;"></div>
   <span class="tsep"></span>
-  <button class="tbtn" data-width="2">Thin</button>
-  <button class="tbtn active" data-width="3.5">Med</button>
-  <button class="tbtn" data-width="6">Bold</button>
-  <span class="tsep"></span>
-  <span id="panHintText" style="font-size:11px;color:#6b7280;padding:0 3px;">Right-drag: Pan</span>
+  <button class="tbtn" data-width="2"><span class="lbl">Thin</span><span class="sh">S</span></button>
+  <button class="tbtn active" data-width="3.5"><span class="lbl">Med</span><span class="sh">M</span></button>
+  <button class="tbtn" data-width="6"><span class="lbl">Bold</span><span class="sh">L</span></button>
+  <span class="tsep ph-hide"></span><span id="panHintText" class="ph-hide" style="font-size:11px;color:#6b7280;padding:0 3px;">Right-drag: Pan</span>
 </div>
 
 <div class="pill pill-bottom-right hide-in-zen">
-  <button class="tbtn" id="soloModeBtn">🧑‍🎓 Solo: OFF</button>
+  <button class="tbtn" id="soloModeBtn" title="Solo mode: hide answers/photos while the student works">🧑‍🎓<span class="lbl"> Solo: <span id="soloState">OFF</span></span></button>
   <button class="tbtn" id="exportBtn">💾</button>
   <button class="tbtn" id="importBtn">📂</button>
   <input type="file" id="importInput" accept=".json" hidden />
 </div>
 
-<textarea id="textEditorBox" rows="2" placeholder="Type..."></textarea>
+<textarea id="textEditorBox" rows="1" wrap="off" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Type…"></textarea>
 <div class="sym-bar" id="symBar">
-  <button class="sym-btn" data-sym="π">π</button><button class="sym-btn" data-sym="√(">√</button><button class="sym-btn" data-sym="²">²</button>
-  <button class="sym-btn" data-sym="°">°</button><button class="sym-btn" data-sym="θ">θ</button><button class="sym-btn" data-sym="∠">∠</button>
-  <button class="sym-btn" data-sym="△">△</button><button class="sym-btn" data-sym="⊥">⊥</button><button class="sym-btn" data-sym="∥">∥</button>
-  <button class="sym-btn" data-sym="≅">≅</button><button class="sym-btn" data-sym="∼">∼</button><button class="sym-btn" data-sym="≤">≤</button>
-  <button class="sym-btn" data-sym="≥">≥</button><button class="sym-btn" data-sym="≠">≠</button>
+  <button class="sym-btn" data-sym="π">π</button><button class="sym-btn" data-sym="√">√</button><button class="sym-btn" data-sym="²">²</button><button class="sym-btn" data-sym="³">³</button>
+  <button class="sym-btn" data-sym="°">°</button><button class="sym-btn" data-sym="θ">θ</button><button class="sym-btn" data-sym="∠">∠</button><button class="sym-btn" data-sym="△">△</button>
+  <button class="sym-btn" data-sym="⊥">⊥</button><button class="sym-btn" data-sym="∥">∥</button><button class="sym-btn" data-sym="≅">≅</button><button class="sym-btn" data-sym="∼">∼</button>
+  <button class="sym-btn" data-sym="≤">≤</button><button class="sym-btn" data-sym="≥">≥</button><button class="sym-btn" data-sym="≠">≠</button><button class="sym-btn" data-sym="±">±</button>
+  <button class="sym-btn" data-sym="&#10;" title="New line">↵</button>
+  <span class="tsep"></span>
+  <button class="sym-btn" data-size="-1" title="Smaller">A−</button><button class="sym-btn" data-size="1" title="Bigger">A+</button>
+  <button class="sym-btn" id="cancelTextBtn" title="Cancel">✕</button>
   <button class="tbtn active" id="doneTextBtn">✓ Place</button>
 </div>
 
@@ -395,7 +451,7 @@
 
 <script src="config.js"></script>
 <script src="data/formulas.js?v=4"></script>
-<script src="cards.js?v=5"></script>
+<script src="cards.js?v=6"></script>
 <script src="data/cards_v2.js?v=5"></script>
 <script src="data/cards_alg.js?v=1"></script>
 <script src="data/cards_data.js?v=1"></script>
@@ -413,6 +469,6 @@
 <script src="data/q_equivalent_expressions.js"></script>
 <script src="data/q_area_volume.js"></script>
 <script src="data/q_one_variable_data.js"></script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

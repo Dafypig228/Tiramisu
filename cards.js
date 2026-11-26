@@ -244,7 +244,7 @@
         s += `<circle cx="${px}" cy="${py}" r="6.5" fill="#111"/>`;
       }
       svg.innerHTML = s;
-      svg.querySelectorAll('.uc-pt').forEach(el => el.addEventListener('click', (e) => { e.stopPropagation(); sel = Number(el.dataset.d); typed = null; draw(); }));
+      svg.querySelectorAll('.uc-pt').forEach(el => el.addEventListener('click', (e) => { e.stopPropagation(); sel = Number(el.dataset.d); typed = null; draw(); emit(); }));
       explain();
     }
     function explain() {
@@ -262,18 +262,30 @@
       info.innerHTML = h;
       api.renderMath(info);
     }
-    mount.querySelectorAll('[data-m]').forEach(b => b.onclick = (e) => { e.stopPropagation(); mode = b.dataset.m; mount.querySelectorAll('[data-m]').forEach(x => x.classList.toggle('on', x === b)); draw(); });
+    // Shared boards: report every change, and accept the other person's state.
+    const emit = () => { if (api.onWidgetState) api.onWidgetState({ mode, coords, sel, q: typed ? input.value : null }); };
+    const syncBars = () => { mount.querySelectorAll('[data-m]').forEach(x => x.classList.toggle('on', x.dataset.m === mode)); cb.classList.toggle('on', coords); };
+    mount.querySelectorAll('[data-m]').forEach(b => b.onclick = (e) => { e.stopPropagation(); mode = b.dataset.m; syncBars(); draw(); emit(); });
     const cb = mount.querySelector('[data-c]');
-    cb.onclick = (e) => { e.stopPropagation(); coords = !coords; cb.classList.toggle('on', coords); draw(); };
+    cb.onclick = (e) => { e.stopPropagation(); coords = !coords; syncBars(); draw(); emit(); };
     const go = () => {
       const r = parseAngle(input.value);
       if (!r) { info.innerHTML = 'Try a form like <b>565pi/6</b>, <b>7π/4</b>, <b>-210</b> or <b>750</b>.'; return; }
-      sel = Math.round(r.deg * 1e6) / 1e6; typed = r; draw();
+      sel = Math.round(r.deg * 1e6) / 1e6; typed = r; draw(); emit();
+    };
+    mount._setState = (st) => {
+      if (!st) return;
+      mode = st.mode === 'rad' ? 'rad' : 'deg'; coords = st.coords !== false;
+      const r = st.q ? parseAngle(st.q) : null;
+      if (r) { input.value = st.q; sel = Math.round(r.deg * 1e6) / 1e6; typed = r; }
+      else { typed = null; sel = (st.sel === null || st.sel === undefined) ? 210 : st.sel; }
+      syncBars(); draw();
     };
     mount.querySelector('[data-go]').onclick = (e) => { e.stopPropagation(); go(); };
     input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') go(); });
     input.addEventListener('keyup', (e) => e.stopPropagation());
     draw();
+    if (api.widgetState) mount._setState(api.widgetState);
   }
 
 
