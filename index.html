@@ -289,12 +289,9 @@
   <div class="drawer-body" id="viewFormulas">
     <input type="text" id="formulaSearch" placeholder="Search formula..." class="set-input" />
     <div class="topic-chips" id="topicChips">
-      <button class="chip-btn active" data-topic="task">This Task</button><button class="chip-btn" data-topic="all">All</button>
-      <button class="chip-btn" data-topic="circles">Circles</button><button class="chip-btn" data-topic="triangles">Triangles</button>
-      <button class="chip-btn" data-topic="trig">Trig</button><button class="chip-btn" data-topic="algebra">Algebra</button>
-      <button class="chip-btn" data-topic="quadratics">Quadratics</button><button class="chip-btn" data-topic="percent">Percent/Rates</button>
-      <button class="chip-btn" data-topic="volume">3D Volume</button><button class="chip-btn" data-topic="data">Data/Prob</button>
-      <button class="chip-btn" data-topic="desmos">Desmos</button>
+      <button class="chip-btn active" data-topic="task">This Task</button><button class="chip-btn" data-topic="all">All</button><button class="chip-btn" data-topic="linear">Linear</button><button class="chip-btn" data-topic="advanced">Advanced</button>
+      <button class="chip-btn" data-topic="ratios">Ratios &amp; %</button><button class="chip-btn" data-topic="data">Data &amp; Prob</button><button class="chip-btn" data-topic="geometry">Geometry</button><button class="chip-btn" data-topic="trig">Trig</button>
+      <button class="chip-btn" data-topic="circles">Circles</button><button class="chip-btn" data-topic="desmos">Desmos</button><button class="chip-btn" data-topic="strategy">Strategy</button>
     </div>
     <div id="formulaList" style="display:flex;flex-direction:column;gap:8px;"></div>
   </div>
@@ -398,6 +395,14 @@
 
 <script src="config.js"></script>
 <script src="data/formulas.js?v=4"></script>
+<script src="cards.js?v=5"></script>
+<script src="data/cards_v2.js?v=5"></script>
+<script src="data/cards_alg.js?v=1"></script>
+<script src="data/cards_data.js?v=1"></script>
+<script src="data/cards_geo.js?v=1"></script>
+<script src="data/cards_tc.js?v=1"></script>
+<script src="data/cards_dm.js?v=1"></script>
+<script src="data/cards_map.js?v=1"></script>
 <script>window.SAT_QUESTIONS = [];</script>
 <script src="data/q_circles.js"></script>
 <script src="data/q_probability.js"></script>
@@ -408,6 +413,6 @@
 <script src="data/q_equivalent_expressions.js"></script>
 <script src="data/q_area_volume.js"></script>
 <script src="data/q_one_variable_data.js"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

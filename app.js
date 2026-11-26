@@ -1,9 +1,36 @@
 (function () {
   const QUESTIONS = window.SAT_QUESTIONS || [];
-  const FORMULAS = window.SAT_FORMULAS || [];
+  // Cards: only the new (v2) cards are shown. Old card ids are mapped to their replacements,
+  // so question links and cards already pinned on a board keep working.
+  const ALL_CARDS = window.SAT_FORMULAS || [];
+  const CARD_MAP_OLD = window.CARD_MAP_OLD || {};
+  const TOPIC_ORDER = ['linear', 'advanced', 'ratios', 'data', 'geometry', 'trig', 'circles', 'desmos', 'strategy'];
+  const NEW_CARDS = ALL_CARDS.filter(f => f && f.v === 2);
+  const FORMULAS = (NEW_CARDS.length ? NEW_CARDS : ALL_CARDS)
+    .map((f, i) => ({ f, i }))
+    .sort((a, b) => {
+      const ta = TOPIC_ORDER.indexOf(a.f.topic), tb = TOPIC_ORDER.indexOf(b.f.topic);
+      if (ta !== tb) return (ta < 0 ? 99 : ta) - (tb < 0 ? 99 : tb);
+      const ba = a.f.badge === 'bonus' ? 1 : 0, bb = b.f.badge === 'bonus' ? 1 : 0;
+      return ba - bb || a.i - b.i;
+    })
+    .map(x => x.f);
+  const CARD_BY_ID = {};
+  FORMULAS.forEach(f => { CARD_BY_ID[f.id] = f; });
+  // Old or new id → list of new card ids.
+  const resolveCardIds = (id) => CARD_BY_ID[id] ? [id] : (CARD_MAP_OLD[id] || []).filter(n => CARD_BY_ID[n]);
+  const cardById = (id) => CARD_BY_ID[id] || CARD_BY_ID[resolveCardIds(id)[0]] || null;
   if (window.FORMULA_OVERRIDES) {
     QUESTIONS.forEach(q => { if (window.FORMULA_OVERRIDES[q.id]) q.formulas = window.FORMULA_OVERRIDES[q.id]; });
   }
+  QUESTIONS.forEach(q => {
+    let ids = [];
+    (q.formulas || []).forEach(id => resolveCardIds(id).forEach(n => { if (!ids.includes(n)) ids.push(n); }));
+    if (window.CARD_LINK_FIX) ids = window.CARD_LINK_FIX(q, ids).filter(n => CARD_BY_ID[n]);
+    q.formulas = ids;
+  });
+  const CK = window.CardKit;
+  const cardApi = () => ({ renderMath, putInDesmos });
 
   /* ==================== DEFAULT SETTINGS & PERSISTENCE ==================== */
   const DEFAULT_SETTINGS = {
@@ -736,7 +763,7 @@
     applyCamera();
   }
 
-  const PASSTHROUGH_SEL = '.bw-head, .bw-resize, .desmos-embed, .q-diagram-bar, .choice-letter-hit, #checkStatusChip, #starQuestionBtn, .gridin-row';
+  const PASSTHROUGH_SEL = '.bw-head, .bw-resize, .desmos-embed, .q-diagram-bar, .choice-letter-hit, #checkStatusChip, #starQuestionBtn, .gridin-row, .k-interactive, .board-widget button, .board-widget input';
   function updateSmartPassThrough(clientX, clientY) {
     if (touchUI || pState || rightPan || spaceHeld) return;
     if (tool === 'cursor') { boardCanvas.classList.add('pass-through'); return; }
@@ -1518,11 +1545,24 @@
   }
 
   function spawnFormulaOnBoard(formulaId) {
-    const f = FORMULAS.find(x => x.id === formulaId); if (!f) return;
+    const f = cardById(formulaId); if (!f) return; formulaId = f.id;
     const pos = screenToWorld(window.innerWidth * 0.14, window.innerHeight * 0.24);
-    const wd = { id: 'bw_' + Date.now(), kind: 'formula', formulaId, x: pos.x, y: pos.y, w: 350, h: 185, scaleMode: true, baseW: 350, contentScale: 1 };
+    const v2 = CK && CK.isV2(f);
+    const wd = { id: 'bw_' + Date.now(), kind: 'formula', formulaId, x: pos.x, y: pos.y, w: v2 ? 400 : 350, h: v2 ? 560 : 185, scaleMode: true, baseW: v2 ? 400 : 350, contentScale: 1 };
     boardWidgets.push(wd); renderBoardWidget(wd); saveWorkspace(); broadcastBoard();
     toast('Formula placed on board');
+  }
+
+  // Load a card's Desmos lines into the board calculator (ids card0..card7 are reused, so pressing again replaces them).
+  function putInDesmos(lines, opts = {}) {
+    if (!document.getElementById('desmosBoardWidget')) spawnDesmosOnBoard();
+    if (!desmosCalc) { toast('Desmos is not loaded (offline?)'); return; }
+    if (opts.degreeMode !== undefined) {
+      desmosCalc.updateSettings({ degreeMode: opts.degreeMode });
+      toast(opts.degreeMode ? 'Desmos switched to Degrees' : 'Desmos switched to Radians');
+    } else toast('Put in Desmos');
+    lines.forEach((l, i) => desmosCalc.setExpression(typeof l === 'string' ? { id: 'card' + i, latex: l } : Object.assign({}, l, { id: 'card' + i })));
+    for (let i = lines.length; i < 8; i++) desmosCalc.removeExpression({ id: 'card' + i });
   }
 
   function spawnDesmosOnBoard(existing = null) {
@@ -1540,7 +1580,13 @@
     el._wd = wd;
     el.style.left = wd.x + 'px'; el.style.top = wd.y + 'px'; el.style.width = wd.w + 'px'; el.style.height = wd.h + 'px';
     if (wd.kind === 'formula') {
-      const f = FORMULAS.find(x => x.id === wd.formulaId) || FORMULAS[0];
+      const f = cardById(wd.formulaId) || FORMULAS[0];
+      if (f.id !== wd.formulaId && CK && CK.isV2(f)) {
+        // An old card pinned before the new cards existed: show its replacement at the new card size.
+        wd.formulaId = f.id; wd.w = Math.max(wd.w || 0, 400); wd.h = Math.max(wd.h || 0, 560);
+        wd.baseW = 400; wd.contentScale = 1; wd.scaleMode = true;
+        el.style.width = wd.w + 'px'; el.style.height = wd.h + 'px';
+      }
       el.innerHTML = `
         <div class="bw-head">
           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📐 ${f.title}</span>
@@ -1551,10 +1597,11 @@
           </div>
         </div>
         <div class="bw-body" style="overflow-y:auto;overflow-x:hidden;">
+          ${CK && CK.isV2(f) ? `<div class="bw-scale-inner" style="padding:8px;transform-origin:0 0;">${CK.render(f, 'board')}</div>` : `
           <div class="bw-scale-inner" style="padding:8px;display:grid;grid-template-columns:80px minmax(0,1fr);gap:8px;align-items:center;transform-origin:0 0;">
             <div class="f-card-vis" style="width:80px;height:68px;">${f.svg}</div>
             <div style="min-width:0;"><div class="f-card-math">${f.math}</div><div class="f-card-note">${f.note}</div>${f.trap ? `<div class="f-card-trap">Trap: ${f.trap}</div>` : ''}</div>
-          </div>
+          </div>`}
         </div>
         <div class="bw-resize"></div>`;
 
@@ -1593,6 +1640,7 @@
       el.querySelector('.bw-close').onclick = () => { el.remove(); boardWidgets = boardWidgets.filter(x => x.id !== wd.id); saveWorkspace(); broadcastBoard(); };
 
       worldLayer.appendChild(el);
+      if (CK && CK.isV2(f)) CK.hydrate(el.querySelector('.k-card'), f, cardApi());
       renderMath(el);
       applyWidgetScale();
       makeWidgetInteractive(el, wd, applyWidgetScale);
@@ -1706,11 +1754,12 @@
     const list = document.getElementById('formulaList');
     const matchedIds = currentQ().formulas || [];
     const items = FORMULAS.filter(f => {
-      if (q) return (f.title + f.note + f.math + f.topic).toLowerCase().includes(q);
+      if (q) return CK && CK.isV2(f) ? CK.searchText(f).includes(q) : (f.title + f.note + f.math + f.topic).toLowerCase().includes(q);
       if (formulaTopic === 'task') return matchedIds.includes(f.id);
       if (formulaTopic === 'all') return true;
       return f.topic === formulaTopic;
     });
+    if (formulaTopic === 'task') items.sort((a, b) => matchedIds.indexOf(a.id) - matchedIds.indexOf(b.id));
 
     list.innerHTML = '';
     if (!items.length) {
@@ -1719,6 +1768,15 @@
     }
 
     items.forEach(f => {
+      if (CK && CK.isV2(f)) {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = CK.render(f, 'drawer');
+        const el = wrap.firstElementChild;
+        list.appendChild(el);
+        el.querySelector('.k-pin').onclick = (e) => { e.stopPropagation(); spawnFormulaOnBoard(f.id); };
+        CK.hydrate(el, f, cardApi());
+        return;
+      }
       const card = document.createElement('div');
       card.className = 'f-card';
 
