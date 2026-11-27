@@ -52,6 +52,36 @@
     .bw-body { flex:1; overflow:hidden; display:flex; flex-direction:column; }
     .bw-resize { position:absolute; right:0; bottom:0; width:15px; height:15px; cursor:nwse-resize; background:linear-gradient(135deg,transparent 50%,#111 50%); opacity:0.45; }
     .bw-resize:hover { opacity:1; }
+    .board-widget .bw-resize { z-index:7; }
+    /* ---------- reactions, "lost here", celebrations, replay ---------- */
+    #fxLayer { position:fixed; inset:0; pointer-events:none; z-index:48; overflow:hidden; }
+    .fx-emoji { position:absolute; transform:translate(-50%,-50%); animation:fxRise 1.9s ease-out forwards; text-shadow:0 2px 6px rgba(0,0,0,0.15); }
+    @keyframes fxRise { 0% { opacity:0; transform:translate(-50%,-50%) scale(0.5); } 15% { opacity:1; transform:translate(-50%,-60%) scale(1.15); } 100% { opacity:0; transform:translate(-50%,-150px) scale(1); } }
+    .fx-name { position:absolute; transform:translate(-50%,0); background:#111; color:#fff; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; animation:fxFade 1.8s ease-out forwards; white-space:nowrap; }
+    @keyframes fxFade { 0%,70% { opacity:1; } 100% { opacity:0; } }
+    #confettiCanvas { position:fixed; inset:0; width:100vw; height:100vh; pointer-events:none; z-index:71; }
+    #celebrateBanner { position:fixed; top:24%; left:50%; transform:translate(-50%,0) scale(0.6); opacity:0; pointer-events:none; z-index:72; background:#fff; border:2px solid #111; border-radius:18px; padding:14px 22px; font-size:22px; font-weight:800; box-shadow:0 12px 40px rgba(0,0,0,0.18); white-space:nowrap; max-width:92vw; overflow:hidden; text-overflow:ellipsis; }
+    #celebrateBanner.show { animation:bannerPop 2.6s ease-out forwards; }
+    @keyframes bannerPop { 0% { opacity:0; transform:translate(-50%,0) scale(0.6); } 10% { opacity:1; transform:translate(-50%,0) scale(1.08); } 18% { transform:translate(-50%,0) scale(1); } 85% { opacity:1; } 100% { opacity:0; transform:translate(-50%,-10px) scale(1); } }
+    .react-picker, .pin-menu { position:fixed; display:none; align-items:center; gap:2px; background:#fff; border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); padding:5px 6px; z-index:62; max-width:calc(100vw - 12px); overflow-x:auto; scrollbar-width:none; }
+    .react-picker.show, .pin-menu.show { display:flex; }
+    .react-picker button { border:none; background:none; font-size:24px; padding:4px 5px; border-radius:10px; cursor:pointer; flex-shrink:0; }
+    .react-picker button:hover { background:#f3f4f6; transform:scale(1.15); }
+    .react-picker .rp-lost { font-size:13px; font-weight:800; background:#fef3c7; color:#92400e; padding:8px 10px; }
+    .pin-menu .pm-text { font-size:12.5px; font-weight:700; padding:0 6px; color:#92400e; white-space:nowrap; }
+    .pin-menu button { border:1px solid var(--border); background:#fff; border-radius:9px; padding:6px 10px; font-weight:800; cursor:pointer; white-space:nowrap; }
+    .pin-menu #pinDoneBtn { background:#16a34a; color:#fff; border-color:#16a34a; }
+    .replay-bar { position:fixed; left:50%; bottom:118px; transform:translateX(-50%); display:none; align-items:center; gap:4px; background:#111; color:#fff; border-radius:999px; padding:5px 8px 5px 14px; z-index:61; box-shadow:var(--shadow); max-width:calc(100vw - 12px); }
+    .replay-bar.show { display:flex; }
+    .replay-bar .rp-title { font-size:12.5px; font-weight:800; margin-right:4px; white-space:nowrap; }
+    .replay-bar button { border:none; background:rgba(255,255,255,0.14); color:#fff; border-radius:999px; padding:6px 10px; font-weight:800; cursor:pointer; white-space:nowrap; }
+    .replay-bar button:hover { background:rgba(255,255,255,0.28); }
+    @media (max-width:640px) { .replay-bar { bottom:calc(100px + env(safe-area-inset-bottom)); } .replay-bar .rp-title { display:none; } #celebrateBanner { font-size:17px; padding:10px 16px; } }
+    .desmos-frame { width:100%; height:100%; border:0; display:block; background:#fff; }
+    /* a window you can draw across; tap it to use it */
+    .bw-shield { position:absolute; left:0; right:0; bottom:0; display:none; z-index:6; cursor:crosshair; background:transparent; touch-action:none; }
+    .board-widget.bw-shielded > .bw-shield { display:block; }
+    .board-widget.bw-active { outline:3px solid #2563eb; outline-offset:2px; }
 
     #boardCanvas { position:absolute; inset:0; width:100%; height:100%; z-index:15; touch-action:none; }
     #boardCanvas.pass-through { pointer-events:none; }
@@ -206,6 +236,24 @@
       .modal-backdrop { padding:6px; }
       .modal { max-height:92vh; }
     }
+
+    .dd-sep { font-size:10px; font-weight:800; color:#9ca3af; text-transform:uppercase; letter-spacing:.06em; padding:6px 10px 2px; }
+    #selBar { position:fixed; z-index:60; display:none; gap:2px; padding:3px; background:#111827; border-radius:9px; box-shadow:0 6px 18px rgba(0,0,0,.18); }
+    #selBar.show { display:flex; }
+    #selBar button { border:none; background:transparent; color:#fff; font:600 12px Inter, sans-serif; padding:6px 9px; border-radius:6px; cursor:pointer; }
+    #selBar button:hover { background:#374151; }
+    #keysHelp { position:fixed; inset:0; z-index:400; display:none; align-items:center; justify-content:center; background:rgba(17,24,39,.35); }
+    #keysHelp.show { display:flex; }
+    #keysHelp .kh-card { background:#fff; border-radius:14px; padding:16px 18px; max-width:min(960px,94vw); max-height:88vh; overflow:auto; box-shadow:0 20px 50px rgba(0,0,0,.25); font-family:Inter, sans-serif; }
+    #keysHelp .kh-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+    #keysHelp .kh-head b { font-size:15px; }
+    #keysHelp .kh-head button { border:none; background:#f3f4f6; border-radius:7px; padding:4px 9px; cursor:pointer; font-weight:700; }
+    #keysHelpBody { display:flex; flex-wrap:wrap; gap:22px; }
+    #keysHelp .kh-col { flex:1 1 240px; }
+    #keysHelp h4 { margin:10px 0 4px; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#6b7280; }
+    #keysHelp td { font-size:12.5px; padding:3px 10px 3px 0; vertical-align:top; }
+    #keysHelp kbd { display:inline-block; border:1px solid #d1d5db; border-bottom-width:2px; border-radius:5px; padding:0 5px; font:600 11px Inter, sans-serif; background:#f9fafb; margin:1px 0; }
+    #keysHelp code { background:#f3f4f6; border-radius:4px; padding:0 4px; font-size:12px; }
   </style>
 </head>
 <body>
@@ -227,6 +275,7 @@
           <span id="diagScaleText" style="min-width:34px;text-align:center;font-weight:700;">100%</span>
           <button id="diagPlusBtn">+</button>
           <button id="diagResetBtn">1:1</button>
+          <button id="diagCopyBtn" title="Copy the figure onto the board">⧉ Copy</button>
         </div>
         <div class="q-diagram-box" id="diagramBox"></div>
       </div>
@@ -270,7 +319,13 @@
       <button data-shape="isoTriangle">△ Triangle (drag)</button>
       <button data-stamp="306090">Stamp: 30-60-90</button>
       <button data-stamp="454590">Stamp: 45-45-90</button>
-      <button data-stamp="axes">Stamp: x-y Axes</button>
+      <button id="addGridBtn">▦ Coordinate grid (tap = point)</button>
+      <div class="dd-sep">Marks</div>
+      <button data-shape="rightMark">∟ Right-angle mark (drag from the corner)</button>
+      <button data-shape="tick">| Equal side (drag along the side)</button>
+      <button data-shape="tick2">‖ Equal side ×2</button>
+      <button data-shape="angleArc">◜ Angle arc (start at the vertex, sweep around)</button>
+      <button data-shape="arrow">→ Arrow</button>
     </div>
   </div>
   <button class="tbtn active" id="snapBtn" title="Snap shapes">✨<span class="lbl"> Snap</span></button>
@@ -281,8 +336,11 @@
   <button class="tbtn" id="tabFormulasBtn" title="Formulas window (shared)">📐<span class="lbl"> Formulas</span></button>
   <button class="tbtn" id="tabDesmosBtn" title="Desmos (shared)">📈<span class="lbl"> Desmos</span></button>
   <button class="tbtn" id="tabPhotosBtn" title="Photos">🖼️<span class="lbl"> Photos</span> (<span id="photoCount">0</span>)</button>
+  <button class="tbtn" id="reactBtn" title="React, or say &quot;I'm lost here&quot; (or press and hold anywhere on the board)">😀<span class="lbl"> React</span></button>
+  <button class="tbtn" id="replayBtn" title="Replay how this board was written, step by step">▶<span class="lbl"> Replay</span></button>
   <span class="tsep"></span>
-  <button class="tbtn" id="exportPngBtn" title="Download board as PNG"><span class="lbl">⬇ </span>PNG</button>
+  <button class="tbtn ph-hide" id="exportPngBtn" title="Download board as PNG"><span class="lbl">⬇ </span>PNG</button>
+  <button class="tbtn ph-hide" id="keysHelpBtn" title="Shortcuts (?)">⌨️</button>
   <button class="tbtn" id="openSettingsBtn">⚙️</button>
 </div>
 
@@ -324,6 +382,21 @@
   <button class="sym-btn" data-size="-1" title="Smaller">A−</button><button class="sym-btn" data-size="1" title="Bigger">A+</button>
   <button class="sym-btn" id="cancelTextBtn" title="Cancel">✕</button>
   <button class="tbtn active" id="doneTextBtn">✓ Place</button>
+</div>
+
+<div id="fxLayer"></div>
+<canvas id="confettiCanvas"></canvas>
+<div id="celebrateBanner"></div>
+<div id="reactPicker" class="react-picker">
+  <button data-r="🤯">🤯</button><button data-r="🔥">🔥</button><button data-r="👏">👏</button><button data-r="😂">😂</button>
+  <button data-r="🤔">🤔</button><button data-r="😭">😭</button><button data-r="💀">💀</button><button data-r="❤️">❤️</button>
+  <span class="tsep"></span><button data-lost="1" class="rp-lost">❓ I'm lost here</button>
+</div>
+<div id="pinMenu" class="pin-menu"><span class="pm-text"></span><button id="pinDoneBtn">✓ Explained</button><button id="pinCloseBtn" title="Close">✕</button></div>
+<div id="replayBar" class="replay-bar">
+  <span class="rp-title">▶ Replaying the board</span>
+  <button id="rpPause" title="Pause">⏸</button><button id="rpSpeed" title="Speed">1×</button>
+  <button id="rpShare" title="Play it on everyone's screen">📣 For everyone</button><button id="rpStop" title="Stop">✕</button>
 </div>
 
 <aside class="side-drawer" id="sideDrawer">
@@ -454,6 +527,9 @@
 
 <script src="config.js"></script>
 <script src="data/formulas.js?v=4"></script>
+
+<div id="selBar"><button id="selDup">⧉ Duplicate</button><button id="selCopy">Copy</button><button id="selDel">🗑 Delete</button></div>
+<div id="keysHelp"><div class="kh-card"><div class="kh-head"><b>Shortcuts</b><button id="keysHelpClose">✕</button></div><div id="keysHelpBody"></div></div></div>
 <script src="cards.js?v=6"></script>
 <script src="data/cards_v2.js?v=5"></script>
 <script src="data/cards_alg.js?v=1"></script>
@@ -461,7 +537,8 @@
 <script src="data/cards_geo.js?v=1"></script>
 <script src="data/cards_tc.js?v=1"></script>
 <script src="data/cards_dm.js?v=1"></script>
-<script src="data/cards_map.js?v=1"></script>
+<script src="data/cards_more.js?v=4"></script>
+<script src="data/cards_map.js?v=6"></script>
 <script>window.SAT_QUESTIONS = [];</script>
 <script src="data/q_circles.js"></script>
 <script src="data/q_probability.js"></script>
@@ -472,6 +549,6 @@
 <script src="data/q_equivalent_expressions.js"></script>
 <script src="data/q_area_volume.js"></script>
 <script src="data/q_one_variable_data.js"></script>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=16"></script>
 </body>
 </html>

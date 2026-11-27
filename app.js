@@ -297,6 +297,7 @@
 
   function clearBoardMemory() {
     hasLoadedCurrentQ = false;
+    closeUndo();
     objects = [];
     boardWidgets = [];
     desmosPhotos = [];
@@ -307,16 +308,53 @@
     if (desmosCalc) desmosCalc = null;
   }
 
+  const peerTexts = {}; // sender -> text they are typing right now
+  window.__dbgObjects = () => objects; window.__dbgPeerTexts = () => peerTexts; window.__dbgDesmos = () => desmosCalc; // for tests / console
   function mergeRemoteObject(obj) {
     if (!obj || !obj.id) return;
     const idx = objects.findIndex(o => o.id === obj.id);
+    noteRemote(obj.id);
     if (idx !== -1) objects[idx] = obj;
     else objects.push(obj);
+    syncedObjs.set(obj.id, JSON.stringify(obj));
+  }
+
+  // What the room last agreed on (id -> JSON). Local changes are sent as a diff against it,
+  // so two people drawing at once never overwrite each other's strokes.
+  let syncedObjs = new Map(), syncedWidgets = new Map();
+  function snapshotSynced() {
+    syncedObjs = new Map(objects.filter(o => o && o.id).map(o => [o.id, JSON.stringify(o)]));
+    syncedWidgets = new Map(boardWidgets.filter(w => w && w.id).map(w => [w.id, JSON.stringify(w)]));
+  }
+  function diffAgainst(list, synced) {
+    const up = [], seen = new Set();
+    list.forEach(o => {
+      if (!o || !o.id) return;
+      seen.add(o.id);
+      const j = JSON.stringify(o);
+      if (synced.get(o.id) !== j) { up.push(o); synced.set(o.id, j); }
+    });
+    const del = [];
+    synced.forEach((_, id) => { if (!seen.has(id)) del.push(id); });
+    del.forEach(id => synced.delete(id));
+    return { up, del };
+  }
+  function applyBoardOps(p) {
+    (p.objDel || []).forEach(id => { noteRemote(id); objects = objects.filter(o => o.id !== id); syncedObjs.delete(id); if (selectedId === id) selectedId = null; });
+    (p.objUp || []).forEach(o => mergeRemoteObject(o));
+    if ((p.wUp && p.wUp.length) || (p.wDel && p.wDel.length)) {
+      let list = boardWidgets.filter(w => !(p.wDel || []).includes(w.id)).map(w => ({ ...w }));
+      (p.wUp || []).forEach(w => { const i = list.findIndex(x => x.id === w.id); if (i >= 0) list[i] = w; else list.push(w); });
+      applyRemoteWidgets(list);
+      (p.wDel || []).forEach(id => syncedWidgets.delete(id));
+      (p.wUp || []).forEach(w => syncedWidgets.set(w.id, JSON.stringify(w)));
+    }
   }
 
   function broadcastObject(obj) {
     if (!roomChannel || !obj) return;
     if (tutorLocked && !isHost) return;
+    syncedObjs.set(obj.id, JSON.stringify(obj)); // peers now have this version
     roomChannel.send({
       type: 'broadcast',
       event: 'obj_upsert',
@@ -345,15 +383,57 @@
   }
 
   // Put a remote Desmos state into the local calculator without echoing it back. Keeps the local viewport.
+  // Remote Desmos edits are merged line by line. A line is only replaced if I haven't changed it since we last agreed,
+  // and never while I'm typing in it — so two people can work in the same graph at once.
+  const desmosBase = new Map(); // id -> JSON of the last version both sides had
+  let desmosPending = null;     // { id, remote, localAtDefer }
+  const desmosList = (st) => (st && st.expressions && st.expressions.list) || [];
+  function rememberDesmosIds(st) { desmosList(st).forEach(e => desmosBase.set(e.id, JSON.stringify(e))); }
   function applyDesmosState(state) {
     if (!desmosCalc || !state) return;
     const cur = desmosCalc.getState();
-    if (JSON.stringify(shareableDesmos(cur)) === JSON.stringify(shareableDesmos(state))) return;
-    const merged = { ...state, graph: { ...(state.graph || {}) } };
-    if (cur.graph && cur.graph.viewport) merged.graph.viewport = cur.graph.viewport;
-    else delete merged.graph.viewport;
-    desmosCalc.setState(merged, { allowUndo: false });
-    lastDesmosJson = JSON.stringify(shareableDesmos(desmosCalc.getState()));
+    if (JSON.stringify(shareableDesmos(cur)) === JSON.stringify(shareableDesmos(state))) { rememberDesmosIds(state); lastDesmosJson = JSON.stringify(shareableDesmos(state)); return; }
+    const g1 = { ...(cur.graph || {}) }, g2 = { ...(state.graph || {}) };
+    delete g1.viewport; delete g2.viewport;
+    const remote = desmosList(state), local = desmosList(cur);
+    const simple = (l) => l.every(e => e.type === 'expression' || e.type === 'table');
+    if (JSON.stringify(g1) !== JSON.stringify(g2) || !simple(remote) || !simple(local)) {
+      // graph settings / folders / notes changed: take the whole state, keep my own pan & zoom
+      const merged = { ...state, graph: { ...(state.graph || {}) } };
+      if (cur.graph && cur.graph.viewport) merged.graph.viewport = cur.graph.viewport; else delete merged.graph.viewport;
+      desmosCalc.setState(merged, { allowUndo: false });
+      desmosBase.clear(); rememberDesmosIds(state);
+    } else {
+      const busy = desmosCalc.selectedExpressionId;
+      const localById = new Map(local.map(e => [e.id, e]));
+      const remoteIds = new Set(remote.map(e => e.id));
+      const untouched = (e) => desmosBase.get(e.id) === JSON.stringify(e); // not edited by me since we last agreed
+      const gone = local.filter(e => !remoteIds.has(e.id) && desmosBase.has(e.id) && untouched(e) && e.id !== busy).map(e => ({ id: e.id }));
+      if (gone.length) { desmosCalc.removeExpressions(gone); gone.forEach(e => desmosBase.delete(e.id)); }
+      remote.forEach(e => {
+        const j = JSON.stringify(e), l = localById.get(e.id);
+        if (l && JSON.stringify(l) === j) { desmosBase.set(e.id, j); return; }
+        if (l && !untouched(l)) return;      // I changed this line and haven't sent it yet: mine wins
+        if (e.id === busy) { desmosPending = { id: e.id, remote: e, localAtDefer: JSON.stringify(l || null) }; return; }
+        if (l && l.type !== e.type) desmosCalc.removeExpression({ id: e.id });
+        desmosCalc.setExpression(e);
+        desmosBase.set(e.id, j);
+      });
+    }
+    // what the room has = the remote state; if I still have unsent lines, the next change check sends them
+    lastDesmosJson = JSON.stringify(shareableDesmos(state));
+  }
+  // When you leave a line that changed remotely while you had it selected, take the remote version
+  // unless you edited it yourself in the meantime.
+  function onDesmosSelectionChange() {
+    const p = desmosPending;
+    if (!p || !desmosCalc || desmosCalc.selectedExpressionId === p.id) return;
+    desmosPending = null;
+    const l = desmosList(desmosCalc.getState()).find(e => e.id === p.id);
+    if (JSON.stringify(l || null) === p.localAtDefer) {
+      desmosCalc.setExpression(p.remote);
+      desmosBase.set(p.id, JSON.stringify(p.remote));
+    }
   }
 
   // Called by Desmos on every local edit; debounced, then sent to the room.
@@ -368,6 +448,7 @@
       const json = JSON.stringify(shared);
       if (json === lastDesmosJson) return; // only pan/zoom changed, or the change came from a remote setState
       lastDesmosJson = json;
+      rememberDesmosIds(shared);
       if (!roomCode || (tutorLocked && !isHost)) return;
       if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'desmos_state', payload: { sender: peerId, questionId: currentQ().id, state: shared } });
       if (sb) sb.from('rooms').update({ desmos_state: st, board_widgets: boardWidgets, updated_at: new Date().toISOString() })
@@ -378,7 +459,7 @@
   // Replace on-board widgets with the room's version. A live Desmos is kept (only moved/updated) so it doesn't flicker.
   function applyRemoteWidgets(widgets, desmosState) {
     widgets = Array.isArray(widgets) ? widgets.map(w => ({ ...w })) : [];
-    savedDesmosState = desmosState || null;
+    if (desmosState !== undefined) savedDesmosState = desmosState || null; // undefined = leave Desmos alone
     const remoteDesmos = widgets.find(w => w.kind === 'desmos');
     const desmosEl = document.getElementById('desmosBoardWidget');
     const keep = {};
@@ -388,7 +469,7 @@
       if (r && el._sync && el._qid === currentQ().id && r.kind === w.kind && (w.kind !== 'formula' || r.formulaId === w.formulaId)) keep[w.id] = el;
       else el.remove();
     });
-    const keepDesmos = !!(desmosEl && remoteDesmos && desmosCalc && desmosEl._wd);
+    const keepDesmos = !!(desmosEl && remoteDesmos && desmosEl._wd); // keep it even while its iframe is still loading
     if (desmosEl && !keepDesmos) { desmosEl.remove(); desmosCalc = null; }
     boardWidgets = widgets;
     widgets.forEach((wd, i) => {
@@ -397,8 +478,8 @@
         boardWidgets[i] = local;
         desmosEl.style.left = local.x + 'px'; desmosEl.style.top = local.y + 'px';
         desmosEl.style.width = local.w + 'px'; desmosEl.style.height = local.h + 'px';
-        desmosCalc.resize();
-        applyDesmosState(savedDesmosState);
+        if (desmosCalc) desmosCalc.resize();
+        if (desmosState !== undefined) applyDesmosState(savedDesmosState);
       } else if (keep[wd.id]) {
         keep[wd.id]._sync(wd);
         boardWidgets[i] = keep[wd.id]._wd;
@@ -478,20 +559,43 @@
       .on('presence', { event: 'join' }, ({ key }) => {
         if (key === peerId) return;
         if (isHost || objects.length || boardWidgets.length) {
-          roomChannel.send({
-            type: 'broadcast', event: 'board_sync',
-            payload: boardPayload()
-          });
+          roomChannel.send({ type: 'broadcast', event: 'board_sync', payload: { ...boardPayload(), to: key } });
         }
       })
       .on('broadcast', { event: 'request_sync' }, ({ payload }) => {
         if (payload.sender === peerId) return;
         if (isHost || objects.length || boardWidgets.length) {
-          roomChannel.send({
-            type: 'broadcast', event: 'board_sync',
-            payload: boardPayload()
-          });
+          roomChannel.send({ type: 'broadcast', event: 'board_sync', payload: { ...boardPayload(), to: payload.sender } });
         }
+      })
+      .on('broadcast', { event: 'board_ops' }, ({ payload }) => {
+        if (payload.sender === peerId) return;
+        if (payload.questionId !== currentQ().id) {
+          // we're on another question: ask for the full board (that also switches us)
+          roomChannel.send({ type: 'broadcast', event: 'request_sync', payload: { sender: peerId } });
+          return;
+        }
+        applyBoardOps(payload);
+        if (payload.diagramScale && payload.diagramScale !== diagramScale) { diagramScale = payload.diagramScale; applyDiagramScaleUI(); }
+        if (typeof payload.tutorLocked === 'boolean') { tutorLocked = payload.tutorLocked; document.getElementById('tutorLockToggle').checked = tutorLocked; }
+        renderBoard();
+        saveWorkspace();
+      })
+      .on('broadcast', { event: 'react' }, ({ payload }) => {
+        if (payload.sender === peerId || payload.questionId !== currentQ().id) return;
+        floatEmoji(payload.wx, payload.wy, payload.emoji, payload.name);
+        if (payload.emoji === '❓') toast(`❓ ${payload.name} is lost here`);
+      })
+      .on('broadcast', { event: 'replay_start' }, ({ payload }) => {
+        if (payload.sender === peerId || payload.questionId !== currentQ().id) return;
+        toast(`▶ ${payload.name} is replaying the explanation`);
+        startReplay(false, payload.speed);
+      })
+      .on('broadcast', { event: 'text_live' }, ({ payload }) => {
+        if (payload.sender === peerId) return;
+        if (payload.done || payload.questionId !== currentQ().id) delete peerTexts[payload.sender];
+        else peerTexts[payload.sender] = { ...payload, t: Date.now() };
+        renderBoard();
       })
       .on('broadcast', { event: 'obj_upsert' }, ({ payload }) => {
         if (payload.sender === peerId) return;
@@ -502,15 +606,20 @@
       })
       .on('broadcast', { event: 'board_sync' }, async ({ payload }) => {
         if (payload.sender === peerId) return;
+        if (payload.to && payload.to !== peerId) return; // a reply meant for someone who just joined
         if (payload.questionId && payload.questionId !== currentQ().id) {
           const idx = QUESTIONS.findIndex(q => q.id === payload.questionId);
           if (idx !== -1) await switchQuestion(idx, true);
         }
+        closeUndo();
         objects = payload.objects || [];
+        // keep what I'm drawing right now
+        if (pState && pState.obj && pState.obj.id && !objects.some(o => o.id === pState.obj.id)) objects.push(pState.obj);
         diagramScale = payload.diagramScale || 1;
         tutorLocked = !!payload.tutorLocked;
         if (Array.isArray(payload.boardWidgets)) applyRemoteWidgets(payload.boardWidgets, payload.desmosState);
         if (payload.answer && payload.answer.qid === currentQ().id) { answerState = payload.answer; paintAnswer(); }
+        snapshotSynced();
         document.getElementById('tutorLockToggle').checked = tutorLocked;
         applyDiagramScaleUI();
         renderBoard();
@@ -523,7 +632,8 @@
       .on('broadcast', { event: 'answer_check' }, ({ payload }) => {
         if (payload.sender === peerId) return;
         const sameQ = payload.questionId === currentQ().id;
-        toast(`${payload.name} answered ${payload.shown}${sameQ ? '' : ' (other question)'} — ${payload.correct ? 'correct ✓' : 'wrong ✗'}`);
+        if (payload.correct && payload.kind && sameQ) celebrate(payload.kind, payload.name, payload.streak);
+        else toast(`${payload.name} answered ${payload.shown}${sameQ ? '' : ' (other question)'} — ${payload.correct ? 'correct ✓' : 'not yet'}`);
       })
       .on('broadcast', { event: 'desmos_state' }, ({ payload }) => {
         if (payload.sender === peerId) return;
@@ -583,6 +693,7 @@
     const remoteObjs = r.board_objects || [];
     const remoteWidgets = Array.isArray(r.board_widgets) ? r.board_widgets : [];
     if (remoteObjs.length || remoteWidgets.length || r.desmos_state) {
+      closeUndo();
       objects = remoteObjs;
       diagramScale = Number(r.diagram_scale) || 1;
       applyRemoteWidgets(remoteWidgets, r.desmos_state || null);
@@ -592,19 +703,34 @@
     }
     tutorLocked = !!r.tutor_locked;
     document.getElementById('tutorLockToggle').checked = tutorLocked;
+    snapshotSynced();
     applyDiagramScaleUI();
     renderBoard();
   }
 
-  function broadcastBoard() {
+  // full = whole board (question switch). Otherwise only what changed since the last send.
+  let dbWriteTimer = null, lastMeta = '';
+  function broadcastBoard(full = false, forceDb = false) {
     if (!roomCode) return;
     if (tutorLocked && !isHost) return;
-    if (roomChannel) {
-      roomChannel.send({
-        type: 'broadcast', event: 'board_sync',
-        payload: boardPayload()
-      });
+    if (full) {
+      snapshotSynced();
+      if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'board_sync', payload: boardPayload() });
+    } else {
+      const o = diffAgainst(objects, syncedObjs), w = diffAgainst(boardWidgets, syncedWidgets);
+      const meta = JSON.stringify([diagramScale, tutorLocked]);
+      const changed = o.up.length || o.del.length || w.up.length || w.del.length || meta !== lastMeta;
+      lastMeta = meta;
+      if (changed && roomChannel) roomChannel.send({ type: 'broadcast', event: 'board_ops', payload: {
+        sender: peerId, questionId: currentQ().id, objUp: o.up, objDel: o.del, wUp: w.up, wDel: w.del, diagramScale, tutorLocked } });
+      if (!changed && !forceDb) return;
     }
+    // the room's saved copy (for people who join later) — at most about once a second
+    clearTimeout(dbWriteTimer);
+    dbWriteTimer = setTimeout(writeRoomDb, full ? 0 : 900);
+  }
+  function writeRoomDb() {
+    if (!roomCode) return;
     if (sb && (!tutorLocked || isHost)) {
       sb.from('rooms').update({
         tutor_locked: tutorLocked,
@@ -649,6 +775,7 @@
     currentIndex = QUESTIONS.length ? (idx + QUESTIONS.length) % QUESTIONS.length : 0;
     const q = currentQ();
     picked = null;
+    if (typeof stopReplay === 'function' && replay) stopReplay();
     customDiagramImg = null;
     soloRevealed = false;
 
@@ -694,15 +821,17 @@
 
     document.querySelectorAll('.board-widget').forEach(w => w.remove());
     if (desmosCalc) desmosCalc = null;
+    closeUndo();
     objects = []; boardWidgets = []; desmosPhotos = []; savedDesmosState = null; diagramScale = 1;
-    selectedId = null;
+    clearSel();
 
     if (!fromRemote || forceReload) await loadWorkspace();
     hasLoadedCurrentQ = true;
     applyDiagramScaleUI();
     renderPhotos();
     renderBoard();
-    if (!fromRemote && !forceReload) broadcastBoard();
+    if (!fromRemote && !forceReload) broadcastBoard(true);
+    else snapshotSynced();
   }
 
   function updateStarUI() {
@@ -753,20 +882,26 @@
   let missedThisVisit = false;
   function recordAnswer(q, correct, shown) {
     const st = { ...(progress[q.id] || {}) };
+    let kind = null;
     if (correct) {
       st.solved = true;
-      if (!missedThisVisit && st.wrong) { st.wrong = false; toast('Correct — removed from Wrong list'); }
-      else toast('Correct');
+      if (!missedThisVisit) {
+        streak++;
+        kind = st.wrong ? 'comeback' : streak >= 3 ? 'streak' : 'correct';
+        if (st.wrong) st.wrong = false; // first try on a later visit: off the Wrong list
+      } else { streak = 0; kind = 'gotthere'; }
     } else {
+      streak = 0;
       if (!missedThisVisit) st.wrongCount = (st.wrongCount || 0) + 1;
       st.wrong = true; missedThisVisit = true;
-      toast('Wrong — added to Wrong list');
+      toast('Not yet — added to the Wrong list. Let\'s look at it together.');
     }
+    if (kind) celebrate(kind, null, streak);
     progress[q.id] = st;
     localStorage.setItem('sat_wb_progress', JSON.stringify(progress));
     renderQuestionBrowser(); updateNavText(); syncProfileToSupabase();
     if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'answer_check', payload: {
-      sender: peerId, name: document.getElementById('roomNameInput').value || 'Friend', questionId: q.id, shown, correct } });
+      sender: peerId, name: document.getElementById('roomNameInput').value || 'Friend', questionId: q.id, shown, correct, kind, streak } });
   }
   document.getElementById('checkStatusChip').onclick = () => {
     const q = currentQ();
@@ -804,6 +939,7 @@
     if (window.__satTextLayout) window.__satTextLayout();
     const cw = document.getElementById('cardsBoardWidget'); if (cw && cw._localZoom) cw._localZoom();
   }
+  window.__w2s = (x, y) => [cam.x + x * cam.z, cam.y + y * cam.z];
   function screenToWorld(sx, sy) { return { x: (sx - cam.x) / cam.z, y: (sy - cam.y) / cam.z }; }
   function zoomAt(sx, sy, factor) {
     const nz = Math.min(3, Math.max(0.35, cam.z * factor));
@@ -818,7 +954,7 @@
     if (tool === 'cursor') { boardCanvas.classList.add('pass-through'); return; }
     if (!settings.smartPass) { boardCanvas.classList.remove('pass-through'); return; }
     const els = document.elementsFromPoint(clientX, clientY);
-    const sel = tool === 'laser' ? '.bw-head, .bw-resize' : PASSTHROUGH_SEL;
+    const sel = drawsOverWindows() ? '.board-widget, .q-diagram-bar, .choice-letter-hit, #checkStatusChip, #starQuestionBtn, .gridin-row' : PASSTHROUGH_SEL;
     const overInteractive = els.some(el => el.matches && el.matches(sel));
     boardCanvas.classList.toggle('pass-through', overInteractive);
   }
@@ -850,22 +986,76 @@
       boardStage.style.cursor = 'grabbing';
     }
   }, true);
-  // Laser works on top of Desmos / formula windows too: grab the pointer before the window sees it.
-  let laserPtr = null;
+  // Windows (Desmos, formula cards) with a drawing tool: DRAG across a window = draw on top of it,
+  // TAP a window = open it for use (blue outline). Tap the board outside it (or Esc) to close it again.
+  // Cursor and Select always use windows directly.
+  const drawsOverWindows = () => tool !== 'cursor' && tool !== 'select' && !spaceHeld;
+  let activeWin = null, winPending = null, winTipShown = false;
+  function refreshShields() {
+    if (activeWin && !activeWin.isConnected) activeWin = null;
+    const on = drawsOverWindows();
+    document.querySelectorAll('#worldLayer > .board-widget').forEach(w => {
+      let sh = w.querySelector(':scope > .bw-shield');
+      if (!sh) { sh = document.createElement('div'); sh.className = 'bw-shield'; w.appendChild(sh); }
+      const head = w.querySelector(':scope > .bw-head');
+      sh.style.top = (head ? head.offsetHeight : 0) + 'px';
+      w.classList.toggle('bw-shielded', on && w !== activeWin);
+    });
+  }
+  new MutationObserver(() => refreshShields()).observe(worldLayer, { childList: true });
+  function setActiveWin(el) {
+    el = el || null;
+    if (activeWin === el) return;
+    if (activeWin) activeWin.classList.remove('bw-active');
+    activeWin = el;
+    if (activeWin) activeWin.classList.add('bw-active');
+    else if (document.activeElement && document.activeElement.tagName === 'IFRAME') document.activeElement.blur();
+    refreshShields();
+  }
+  function openWindowByTap(el, x, y) {
+    setActiveWin(el);
+    if (!winTipShown) { winTipShown = true; toast('Window open — tap the board outside it to draw again'); }
+    if (el.id === 'desmosBoardWidget') { const f = el.querySelector('iframe'); if (f) try { f.focus(); } catch {} return; }
+    // pass the tap on to what's under it (a button, a chip, a unit-circle point…)
+    requestAnimationFrame(() => {
+      const t = document.elementFromPoint(x, y);
+      if (!t || !el.contains(t)) return;
+      const hit = (t.closest && t.closest('button, input, select, a, .cw-item, .chip-btn, [data-d]')) || t;
+      if (hit.tagName === 'INPUT' || hit.tagName === 'SELECT') hit.focus();
+      else hit.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }));
+    });
+  }
+  function startPendingWin() {
+    const p = winPending; if (!p || p.started) return;
+    p.started = true;
+    if (touchUI) stageDown(p.ev); else onBoardDown(p.ev);
+  }
   boardStage.addEventListener('pointerdown', (e) => {
-    if (tool !== 'laser' || e.button === Number(settings.panButton) || e.button === 1) return;
-    const t = e.target;
-    if (!t.closest || !t.closest('.board-widget') || t.closest('.bw-head, .bw-resize')) return;
-    if (touchUI && e.pointerType === 'touch' && !touchesDraw()) return;
+    const t = e.target, win = t.closest ? t.closest('.board-widget') : null;
+    if (activeWin && win !== activeWin) { // tapping anywhere else closes the open window (and only does that)
+      setActiveWin(null);
+      if (!win && !(t.closest && t.closest(UI_TARGETS))) { e.preventDefault(); e.stopPropagation(); return; }
+    }
+    if (!win || win === activeWin || !drawsOverWindows() || t.closest('.bw-head, .bw-resize')) return;
+    if (e.button === Number(settings.panButton) || e.button === 1) return;
     e.preventDefault(); e.stopPropagation();
-    laserPtr = e.pointerId;
     try { boardStage.setPointerCapture(e.pointerId); } catch {}
-    onBoardDown(e);
+    if (winPending && winPending.id !== e.pointerId) { startPendingWin(); if (touchUI) stageDown(e); return; } // 2nd finger: pinch
+    winPending = { el: win, id: e.pointerId, x: e.clientX, y: e.clientY, ev: e, started: false };
   }, true);
-  boardStage.addEventListener('pointermove', (e) => { if (laserPtr === e.pointerId && !touchUI) onBoardMove(e); }, true);
-  const endLaserPtr = (e) => { if (laserPtr !== e.pointerId) return; laserPtr = null; if (!touchUI) onBoardUp(e); };
-  boardStage.addEventListener('pointerup', endLaserPtr, true);
-  boardStage.addEventListener('pointercancel', endLaserPtr, true);
+  boardStage.addEventListener('pointermove', (e) => {
+    const p = winPending; if (!p || e.pointerId !== p.id) return;
+    if (!p.started) { if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < 8) return; startPendingWin(); }
+    if (!touchUI) onBoardMove(e); // on touch screens the stage handler takes it from here
+  }, true);
+  const endPendingWin = (e) => {
+    const p = winPending; if (!p || e.pointerId !== p.id) return;
+    winPending = null;
+    if (!p.started) { if (e.type === 'pointerup') openWindowByTap(p.el, p.x, p.y); return; }
+    if (!touchUI) onBoardUp(e);
+  };
+  boardStage.addEventListener('pointerup', endPendingWin, true);
+  boardStage.addEventListener('pointercancel', endPendingWin, true);
   window.addEventListener('pointermove', (e) => {
     if (!rightPan) return;
     cam.x = e.clientX - rightPan.sx; cam.y = e.clientY - rightPan.sy; applyCamera();
@@ -886,6 +1076,29 @@
       cam.x -= e.deltaX; cam.y -= e.deltaY; applyCamera();
     }
   }, { passive: false });
+
+  // Pinch / Ctrl+scroll anywhere (over Desmos, a toolbar, a window…) zooms the BOARD, never the whole web page,
+  // so the buttons can't get pushed off the screen.
+  function ctrlWheelZoom(e, x, y) {
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    const speed = (Number(settings.zoomSpeed) || 22) / 10000;
+    zoomAt(x, y, Math.exp(-Math.max(-45, Math.min(45, dy)) * speed));
+  }
+  window.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.target.closest && e.target.closest('.peek-window')) return; // the photo viewer zooms its photo
+    e.preventDefault(); e.stopPropagation();
+    if (e.target.closest && e.target.closest('.side-drawer, .modal')) return;
+    ctrlWheelZoom(e, e.clientX, e.clientY);
+  }, { passive: false, capture: true });
+  window.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    if (['Equal', 'NumpadAdd', 'Minus', 'NumpadSubtract', 'Digit0', 'Numpad0'].includes(e.code)) {
+      e.preventDefault();
+      if (e.code === 'Digit0' || e.code === 'Numpad0') { cam = homeCam(); applyCamera(); }
+      else zoomAt(window.innerWidth / 2, window.innerHeight / 2, /Minus|Subtract/.test(e.code) ? 0.86 : 1.16);
+    }
+  }, true);
 
   document.getElementById('boardZoomOut').onclick = () => zoomAt(window.innerWidth / 2, window.innerHeight / 2, 0.86);
   document.getElementById('boardZoomIn').onclick = () => zoomAt(window.innerWidth / 2, window.innerHeight / 2, 1.16);
@@ -931,30 +1144,48 @@
   }
   window.addEventListener('resize', resizeCanvas);
 
+  // Undo only reverts what *I* changed: each entry keeps the "before" of just the objects my action changed,
+  // so undoing never removes a friend's strokes.
+  let undoOpen = null; // { qid, before: Map(id -> json), remote: Set(ids others changed meanwhile) }
+  function objMap() { return new Map(objects.filter(o => o && o.id).map(o => [o.id, JSON.stringify(o)])); }
+  function closeUndo() {
+    const e = undoOpen; if (!e) return; undoOpen = null;
+    const now = objMap(), ids = new Set([...e.before.keys(), ...now.keys()]), changes = [];
+    ids.forEach(id => { if (!e.remote.has(id) && e.before.get(id) !== now.get(id)) changes.push([id, e.before.has(id) ? e.before.get(id) : null]); });
+    if (!changes.length) return;
+    const u = undoByQ[e.qid] || (undoByQ[e.qid] = []);
+    u.push(changes); if (u.length > 80) u.shift();
+    redoByQ[e.qid] = [];
+  }
   function pushUndo() {
-    const id = currentQ().id;
-    if (!undoByQ[id]) undoByQ[id] = [];
-    undoByQ[id].push(JSON.stringify(objects));
-    if (undoByQ[id].length > 60) undoByQ[id].shift();
-    redoByQ[id] = [];
+    closeUndo();
+    const e = undoOpen = { qid: currentQ().id, before: objMap(), remote: new Set() };
+    setTimeout(() => { if (undoOpen === e && !pState) closeUndo(); }, 0);
+  }
+  function noteRemote(id) { if (undoOpen && id) undoOpen.remote.add(id); }
+  function applyChanges(changes) {
+    const inv = [];
+    changes.forEach(([id, json]) => {
+      const i = objects.findIndex(o => o.id === id);
+      inv.push([id, i >= 0 ? JSON.stringify(objects[i]) : null]);
+      if (json === null) { if (i >= 0) objects.splice(i, 1); }
+      else { const o = JSON.parse(json); if (i >= 0) objects[i] = o; else objects.push(o); }
+    });
+    return inv;
   }
   function undo() {
-    const id = currentQ().id;
-    const u = undoByQ[id];
+    closeUndo();
+    const id = currentQ().id, u = undoByQ[id];
     if (!u || !u.length) return;
-    if (!redoByQ[id]) redoByQ[id] = [];
-    redoByQ[id].push(JSON.stringify(objects));
-    objects = JSON.parse(u.pop());
-    selectedId = null; renderBoard(); saveWorkspace(); broadcastBoard();
+    (redoByQ[id] || (redoByQ[id] = [])).push(applyChanges(u.pop()));
+    clearSel(); renderBoard(); saveWorkspace(); broadcastBoard();
   }
   function redo() {
-    const id = currentQ().id;
-    const r = redoByQ[id];
+    closeUndo();
+    const id = currentQ().id, r = redoByQ[id];
     if (!r || !r.length) return;
-    if (!undoByQ[id]) undoByQ[id] = [];
-    undoByQ[id].push(JSON.stringify(objects));
-    objects = JSON.parse(r.pop());
-    selectedId = null; renderBoard(); saveWorkspace(); broadcastBoard();
+    (undoByQ[id] || (undoByQ[id] = [])).push(applyChanges(r.pop()));
+    clearSel(); renderBoard(); saveWorkspace(); broadcastBoard();
   }
   document.getElementById('undoBtn').onclick = undo;
   document.getElementById('redoBtn').onclick = redo;
@@ -965,8 +1196,9 @@
     document.querySelectorAll('.toolbar-top .tbtn[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === nextTool));
     document.getElementById('shapesBtn').classList.toggle('active', nextTool === 'shape');
     boardCanvas.classList.toggle('pass-through', nextTool === 'cursor' && !spaceHeld);
+    if (typeof refreshShields === 'function') refreshShields();
     boardCanvas.style.cursor = spaceHeld ? 'grab' : nextTool === 'select' ? 'default' : nextTool === 'text' ? 'text' : nextTool === 'eraser' ? 'cell' : 'crosshair';
-    if (nextTool !== 'select') { selectedId = null; renderBoard(); }
+    if (nextTool !== 'select') { clearSel(); renderBoard(); }
   }
   document.querySelectorAll('.toolbar-top .tbtn[data-tool]').forEach(b => { b.onclick = () => setTool(b.dataset.tool); });
 
@@ -1009,18 +1241,15 @@
   });
 
   function getBounds(o) {
+    if (o.type === 'pin') { const r = 15 / cam.z; return { x: o.x - r, y: o.y - r, w: 2 * r, h: 2 * r }; }
     if (o.type === 'stroke') {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const p of o.points) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
       return { x: minX - 5, y: minY - 5, w: Math.max(14, maxX - minX + 10), h: Math.max(14, maxY - minY + 10) };
     }
-    if (o.type === 'text') {
-      const fs = o.fontSize || 19, lines = (o.text || '').split('\n');
-      const mc = getBounds._mc || (getBounds._mc = document.createElement('canvas').getContext('2d'));
-      mc.font = `600 ${fs}px Inter, sans-serif`;
-      const w = Math.max(...lines.map(l => mc.measureText(l).width), fs * 0.6);
-      return { x: o.x, y: o.y, w: w + 8, h: lines.length * fs * 1.32 + 6 };
-    }
+    if (o.type === 'text') { const tb = textBlock(o.text, o.fontSize || 19); return { x: o.x, y: o.y, w: tb.w, h: tb.h }; }
+    if (o.type === 'gpt') return { x: o.x - 6, y: o.y - 6, w: 12, h: 12 };
+    if (o.type === 'angleArc') { const r = o.r || 1; return { x: o.x - r, y: o.y - r, w: 2 * r, h: 2 * r }; }
     return { x: Math.min(o.x, o.x + o.w), y: Math.min(o.y, o.y + o.h), w: Math.abs(o.w), h: Math.abs(o.h) };
   }
 
@@ -1029,7 +1258,12 @@
     for (let i = objects.length - 1; i >= 0; i--) {
       const o = objects[i];
       if (o.type === 'stroke') { if (o.points.some(p => Math.hypot(p.x - pt.x, p.y - pt.y) < tol)) return o; }
-      else { const b = getBounds(o); if (pt.x >= b.x - tol && pt.x <= b.x + b.w + tol && pt.y >= b.y - tol && pt.y <= b.y + b.h + tol) return o; }
+      else if (o.type === 'grid') {
+        // a grid is only grabbed by its edge, so you can still draw and lasso on top of it
+        const b = getBounds(o), t2 = tol * 1.4;
+        const inX = pt.x >= b.x - t2 && pt.x <= b.x + b.w + t2, inY = pt.y >= b.y - t2 && pt.y <= b.y + b.h + t2;
+        if (inX && inY && (pt.x < b.x + t2 || pt.x > b.x + b.w - t2 || pt.y < b.y + t2 || pt.y > b.y + b.h - t2)) return o;
+      } else { const b = getBounds(o); if (pt.x >= b.x - tol && pt.x <= b.x + b.w + tol && pt.y >= b.y - tol && pt.y <= b.y + b.h + tol) return o; }
     }
     return null;
   }
@@ -1049,7 +1283,7 @@
       minX = Math.min(minX, pts[i].x); minY = Math.min(minY, pts[i].y); maxX = Math.max(maxX, pts[i].x); maxY = Math.max(maxY, pts[i].y);
     }
     const direct = Math.hypot(l.x - f.x, l.y - f.y);
-    if (direct > 25 && len / direct < 1.12) return { id: stroke.id, type: 'line', onDiagram: stroke.onDiagram, x: f.x, y: f.y, w: l.x - f.x, h: l.y - f.y, color: stroke.color, width: stroke.width, dashed: false };
+    if (direct > 25 && len / direct < 1.12) { const a = snapToGrid(f) || f, z = snapToGrid(l) || l; return { id: stroke.id, type: 'line', onDiagram: stroke.onDiagram, x: a.x, y: a.y, w: z.x - a.x, h: z.y - a.y, color: stroke.color, width: stroke.width, dashed: false }; }
     const bw = maxX - minX, bh = maxY - minY;
     if (bw > 24 && bh > 24 && direct < Math.max(bw, bh) * 0.38) {
       const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, r = (bw + bh) / 4;
@@ -1070,8 +1304,12 @@
       targetCtx.scale(cam.z, cam.z);
     }
 
-    for (const o of objects) {
+    const liveTexts = Object.values(peerTexts).filter(t => Date.now() - t.t < 20000);
+    const liveIds = new Set(liveTexts.map(t => t.id).filter(Boolean));
+    const drawList = (window.__satReplayObjs || objects), ordered = drawList.filter(o => o.type === 'grid').concat(drawList.filter(o => o.type !== 'grid'));
+    for (const o of ordered) {
       if (o === window.__satEditingText) continue; // being edited in the text box
+      if (liveIds.has(o.id)) continue; // someone else is editing it — their live version is drawn below
       targetCtx.save();
       if (o.type === 'stroke') {
         if (o.points.length >= 2) {
@@ -1100,10 +1338,17 @@
         targetCtx.beginPath(); targetCtx.moveTo(b.x + b.w / 2, b.y); targetCtx.lineTo(b.x, b.y + b.h); targetCtx.lineTo(b.x + b.w, b.y + b.h); targetCtx.closePath(); targetCtx.stroke();
       } else if (o.type === 'stamp') {
         drawStamp(o, targetCtx);
+      } else if (o.type === 'grid') {
+        drawGrid(o, targetCtx);
+      } else if (o.type === 'gpt') {
+        drawGridPoint(o, targetCtx);
+      } else if (o.type === 'arrow' || o.type === 'rightMark' || o.type === 'tick' || (o.type === 'angleArc' && o.a0 != null)) {
+        drawMark(o, targetCtx);
+      } else if (o.type === 'pin') {
+        if (!window.__satReplayObjs) drawPin(o, targetCtx);
       } else if (o.type === 'text') {
         targetCtx.fillStyle = o.color || '#111111';
-        targetCtx.font = `600 ${o.fontSize || 19}px Inter, sans-serif`; targetCtx.textBaseline = 'top';
-        (o.text || '').split('\n').forEach((ln, i) => targetCtx.fillText(ln, o.x + 3, o.y + 3 + i * (o.fontSize || 19) * 1.32));
+        drawTextBlock(targetCtx, o.text || '', o.fontSize || 19, o.x, o.y);
       } else if (o.type === 'image') {
         let im = imgCache.get(o.src);
         if (!im) { im = new Image(); im.onload = () => renderBoard(); im.src = o.src; imgCache.set(o.src, im); }
@@ -1112,7 +1357,36 @@
       targetCtx.restore();
     }
 
-    if (!skipCam && selectedId) {
+    // Text other people are typing right now
+    if (!skipCam) liveTexts.forEach(t => {
+      const fs = t.fontSize || 19, tb = textBlock(String(t.text || ''), fs);
+      targetCtx.save();
+      targetCtx.strokeStyle = '#2563eb'; targetCtx.lineWidth = 1.2 / cam.z; targetCtx.setLineDash([4 / cam.z, 3 / cam.z]);
+      targetCtx.strokeRect(t.x, t.y, tb.w, tb.h);
+      targetCtx.setLineDash([]);
+      targetCtx.fillStyle = t.color || '#111111';
+      drawTextBlock(targetCtx, String(t.text || ''), fs, t.x, t.y);
+      targetCtx.font = `700 ${11 / cam.z}px Inter, sans-serif`; targetCtx.fillStyle = '#2563eb'; targetCtx.textBaseline = 'bottom';
+      targetCtx.fillText(`${t.name || 'Friend'} is typing…`, t.x, t.y - 2 / cam.z);
+      targetCtx.restore();
+    });
+
+    if (!skipCam && multiSel.length && !window.__satReplayObjs) {
+      const b = selBounds();
+      if (b) {
+        targetCtx.save(); targetCtx.strokeStyle = '#2563eb'; targetCtx.lineWidth = 1.4 / cam.z; targetCtx.setLineDash([5 / cam.z, 4 / cam.z]);
+        targetCtx.strokeRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8); targetCtx.setLineDash([]);
+        targetCtx.fillStyle = '#2563eb'; const hs = 10 / cam.z; targetCtx.fillRect(b.x + b.w + 4 - hs / 2, b.y + b.h + 4 - hs / 2, hs, hs);
+        targetCtx.restore();
+      }
+    }
+    if (!skipCam && pState && pState.mode === 'lasso' && pState.pts.length > 1) {
+      targetCtx.save(); targetCtx.strokeStyle = '#2563eb'; targetCtx.fillStyle = 'rgba(37,99,235,0.06)'; targetCtx.lineWidth = 1.4 / cam.z; targetCtx.setLineDash([5 / cam.z, 4 / cam.z]);
+      targetCtx.beginPath(); pState.pts.forEach((p, i) => i ? targetCtx.lineTo(p.x, p.y) : targetCtx.moveTo(p.x, p.y)); targetCtx.closePath(); targetCtx.fill(); targetCtx.stroke();
+      targetCtx.restore();
+    }
+    if (!skipCam) placeSelBar();
+    if (!skipCam && selectedId && !window.__satReplayObjs) {
       const sel = objects.find(o => o.id === selectedId);
       if (sel) {
         const b = getBounds(sel);
@@ -1190,6 +1464,388 @@
 
   /* ==================== POINTER EVENTS ==================== */
   let pState = null;
+
+  /* ==================== MATH IN TEXT: x^2, sqrt(3), (a+b)/(c), pi, <= ==================== */
+  var MATH_TRIGGER = /[\^_\/]|sqrt|\bpi\b|\btheta\b|<=|>=|!=|\+-|\binf\b|\bdeg\b|->/;
+  var MATH_WORDS = { pi: 'π', theta: 'θ', alpha: 'α', beta: 'β', deg: '°', inf: '∞', Delta: 'Δ', delta: 'δ', degrees: '°' };
+  var MATH_OPS = [['<=', '≤'], ['>=', '≥'], ['!=', '≠'], ['+-', '±'], ['->', '→'], ['*', '·']];
+  var mc = document.createElement('canvas').getContext('2d');
+  var mFont = (s) => `600 ${s}px Inter, sans-serif`;
+  function mText(s, size) {
+    mc.font = mFont(size);
+    return { w: mc.measureText(s).width, asc: size * 0.76, desc: size * 0.22, draw(c, x, y) { c.font = mFont(size); c.fillText(s, x, y); } };
+  }
+  function mRow(items) {
+    let w = 0, asc = 0, desc = 0;
+    items.forEach(b => { w += b.w; asc = Math.max(asc, b.asc); desc = Math.max(desc, b.desc); });
+    return { w, asc, desc, draw(c, x, y) { let cx = x; items.forEach(b => { b.draw(c, cx, y); cx += b.w; }); } };
+  }
+  function mSup(base, ex, size, sub) {
+    const sh = sub ? -size * 0.24 : size * 0.42;
+    return { w: base.w + ex.w + size * 0.05, asc: Math.max(base.asc, ex.asc + sh), desc: Math.max(base.desc, ex.desc - sh),
+      draw(c, x, y) { base.draw(c, x, y); ex.draw(c, x + base.w + size * 0.03, y - sh); } };
+  }
+  function mFrac(num, den, size) {
+    const ax = size * 0.28, g = size * 0.14, lw = Math.max(1, size * 0.065), w = Math.max(num.w, den.w) + size * 0.26;
+    return { w, asc: ax + g + num.desc + num.asc, desc: Math.max(0, den.asc + den.desc + g - ax),
+      draw(c, x, y) {
+        const y0 = y - ax;
+        c.fillRect(x + size * 0.07, y0 - lw / 2, w - size * 0.14, lw);
+        num.draw(c, x + (w - num.w) / 2, y0 - g - num.desc);
+        den.draw(c, x + (w - den.w) / 2, y0 + g + den.asc);
+      } };
+  }
+  function mSqrt(inner, size) {
+    const pad = size * 0.52, top = inner.asc + size * 0.14, lw = Math.max(1, size * 0.065), desc = Math.max(inner.desc, size * 0.12);
+    const w = pad + inner.w + size * 0.1;
+    return { w, asc: top + lw, desc,
+      draw(c, x, y) {
+        c.save(); c.strokeStyle = c.fillStyle; c.lineWidth = lw; c.lineJoin = 'round'; c.lineCap = 'round';
+        c.beginPath(); c.moveTo(x + size * 0.04, y - size * 0.26); c.lineTo(x + size * 0.14, y - size * 0.32);
+        c.lineTo(x + size * 0.27, y + desc * 0.8); c.lineTo(x + pad - size * 0.05, y - top); c.lineTo(x + w, y - top); c.stroke(); c.restore();
+        inner.draw(c, x + pad, y);
+      } };
+  }
+  function mParen(inner, size) {
+    const ps = Math.max(size, (inner.asc + inner.desc) * 0.95), yc = (inner.asc - inner.desc) / 2;
+    const o = mText('(', ps), cl = mText(')', ps), dy = -yc + 0.27 * ps;
+    return { w: o.w + inner.w + cl.w, asc: Math.max(inner.asc, yc + 0.5 * ps), desc: Math.max(inner.desc, 0.5 * ps - yc),
+      draw(c, x, y) { o.draw(c, x, y + dy); inner.draw(c, x + o.w, y); cl.draw(c, x + o.w + inner.w, y + dy); } };
+  }
+  function mTokens(s) {
+    const t = []; let i = 0;
+    const word = (wd) => {
+      while (wd) {
+        if (wd.startsWith('sqrt')) { t.push({ k: 'sqrt' }); wd = wd.slice(4); continue; }
+        const gk = Object.keys(MATH_WORDS).sort((a, b) => b.length - a.length).find(k => wd === k);
+        if (gk) { t.push({ k: 'var', v: MATH_WORDS[gk] }); return; }
+        t.push({ k: wd.length === 1 ? 'var' : 'word', v: wd }); return;
+      }
+    };
+    while (i < s.length) {
+      const r = s.slice(i); let m;
+      if ((m = r.match(/^\d+(\.\d+)?/))) { t.push({ k: 'num', v: m[0] }); i += m[0].length; continue; }
+      if ((m = r.match(/^[A-Za-z]+/))) { word(m[0]); i += m[0].length; continue; }
+      const op = MATH_OPS.find(([a]) => r.startsWith(a));
+      if (op) { t.push({ k: 'sym', v: op[1] }); i += op[0].length; continue; }
+      const ch = s[i]; t.push({ k: '()^_/'.includes(ch) ? ch : 'sym', v: ch }); i++;
+    }
+    return t;
+  }
+  function mAst(s) {
+    const tk = mTokens(s); let i = 0;
+    const fracs = (a) => {
+      for (let j = 1; j < a.length - 1; j++) if (a[j].op && a[j - 1].ok && a[j + 1].ok) { a.splice(j - 1, 3, { t: 'frac', n: a[j - 1], d: a[j + 1], ok: true }); j--; }
+      return a;
+    };
+    function prim() {
+      const t = tk[i++];
+      if (t.k === '(') { const c = seq(); if (tk[i] && tk[i].k === ')') i++; return { t: 'grp', c, ok: true }; }
+      if (t.k === 'sqrt') { const a = (i < tk.length && tk[i].k !== ')') ? prim() : { t: 'txt', v: ' ' }; return { t: 'sqrt', a, ok: true }; }
+      if (t.k === 'num' || t.k === 'var') return { t: 'txt', v: t.v, ok: true };
+      if (t.k === 'word') return { t: 'txt', v: t.v, ok: t.v.length <= 2 };
+      return { t: 'txt', v: t.k === 'sym' ? t.v : t.k, op: t.k === '/', ok: false };
+    }
+    function post() {
+      let a = prim();
+      while (i < tk.length && (tk[i].k === '^' || tk[i].k === '_')) {
+        const k = tk[i++].k; if (i >= tk.length || tk[i].k === ')') break;
+        let e;
+        if (tk[i].k === 'sym' && tk[i].v === '-' && tk[i + 1] && (tk[i + 1].k === 'num' || tk[i + 1].k === 'var')) { e = { t: 'txt', v: '−' + tk[i + 1].v }; i += 2; }
+        else e = prim();
+        a = { t: k === '^' ? 'sup' : 'sub', b: a, e, ok: true };
+      }
+      return a;
+    }
+    function seq() { const out = []; while (i < tk.length && tk[i].k !== ')') out.push(post()); return fracs(out); }
+    const all = [];
+    while (i < tk.length) { all.push(...seq()); if (i < tk.length) { all.push({ t: 'txt', v: ')' }); i++; } }
+    return all;
+  }
+  function mLay(n, s) {
+    if (n.t === 'txt') return mText(n.v, s);
+    if (n.t === 'grp') return mParen(mRow(n.c.map(x => mLay(x, s))), s);
+    if (n.t === 'sqrt') return mSqrt(mInner(n.a, s), s);
+    if (n.t === 'sup' || n.t === 'sub') return mSup(mLay(n.b, s), mInner(n.e, Math.max(7, s * 0.7)), s, n.t === 'sub');
+    if (n.t === 'frac') return mFrac(mInner(n.n, s * 0.9), mInner(n.d, s * 0.9), s);
+    return mText('', s);
+  }
+  function mInner(n, s) { return n.t === 'grp' ? mRow(n.c.map(x => mLay(x, s))) : mLay(n, s); }
+  var textBlockCache = new Map();
+  function textBlock(text, fs) {
+    const key = fs + '|' + text;
+    let tb = textBlockCache.get(key);
+    if (tb) return tb;
+    let top = 0, w = fs * 0.6;
+    const lines = String(text || '').split('\n').map(ln => {
+      const box = MATH_TRIGGER.test(ln) ? mRow(mAst(ln).map(n => mLay(n, fs))) : mText(ln, fs);
+      const asc = Math.max(fs * 0.95, box.asc + fs * 0.05), h = Math.max(fs * 1.32, asc + box.desc + fs * 0.25);
+      const L = { box, base: top + asc }; top += h; w = Math.max(w, box.w); return L;
+    });
+    tb = { w: w + 8, h: top + 6, lines };
+    if (textBlockCache.size > 400) textBlockCache.clear();
+    textBlockCache.set(key, tb);
+    return tb;
+  }
+  window.__dbgTB = (t, f) => textBlock(t, f);
+  function drawTextBlock(c, text, fs, x, y) {
+    c.textBaseline = 'alphabetic';
+    textBlock(text, fs).lines.forEach(L => L.box.draw(c, x + 3, y + 3 + L.base));
+  }
+
+  /* ==================== COORDINATE GRID ==================== */
+  function gridGeom(o) { const b = getBounds(o), u = o.u || 30; return { b, u, ox: b.x + b.w / 2, oy: b.y + b.h / 2, nx: Math.floor(b.w / 2 / u), ny: Math.floor(b.h / 2 / u) }; }
+  function drawGrid(o, c) {
+    const { b, u, ox, oy, nx, ny } = gridGeom(o);
+    c.save();
+    c.fillStyle = 'rgba(255,255,255,0.92)'; c.fillRect(b.x, b.y, b.w, b.h);
+    c.strokeStyle = '#e3e6ea'; c.lineWidth = 1;
+    c.beginPath();
+    for (let i = -nx; i <= nx; i++) { const x = ox + i * u; c.moveTo(x, b.y); c.lineTo(x, b.y + b.h); }
+    for (let j = -ny; j <= ny; j++) { const y = oy + j * u; c.moveTo(b.x, y); c.lineTo(b.x + b.w, y); }
+    c.stroke();
+    c.strokeStyle = '#d1d5db'; c.strokeRect(b.x, b.y, b.w, b.h);
+    c.strokeStyle = '#374151'; c.fillStyle = '#374151'; c.lineWidth = 1.6;
+    c.beginPath(); c.moveTo(b.x + 2, oy); c.lineTo(b.x + b.w - 2, oy); c.moveTo(ox, b.y + b.h - 2); c.lineTo(ox, b.y + 2); c.stroke();
+    const ah = 7;
+    c.beginPath(); c.moveTo(b.x + b.w - 2, oy); c.lineTo(b.x + b.w - 2 - ah, oy - ah * 0.6); c.lineTo(b.x + b.w - 2 - ah, oy + ah * 0.6); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(ox, b.y + 2); c.lineTo(ox - ah * 0.6, b.y + 2 + ah); c.lineTo(ox + ah * 0.6, b.y + 2 + ah); c.closePath(); c.fill();
+    const fs = Math.max(8, Math.min(13, u * 0.4)), step = u < 13 ? 5 : u < 22 ? 2 : 1;
+    c.font = `600 ${fs}px Inter, sans-serif`; c.fillStyle = '#6b7280';
+    c.textAlign = 'center'; c.textBaseline = 'top';
+    for (let i = -nx + 1; i < nx; i++) if (i && i % step === 0) { c.fillText(String(i).replace('-', '−'), ox + i * u, oy + 3); c.fillRect(ox + i * u - 0.6, oy - 3, 1.2, 6); }
+    c.textAlign = 'right'; c.textBaseline = 'middle';
+    for (let j = -ny + 1; j < ny; j++) if (j && j % step === 0) { c.fillText(String(j).replace('-', '−'), ox - 5, oy - j * u); c.fillRect(ox - 3, oy - j * u - 0.6, 6, 1.2); }
+    c.textAlign = 'left'; c.textBaseline = 'alphabetic'; c.fillStyle = '#374151'; c.font = `italic 700 ${fs + 2}px Inter, sans-serif`;
+    c.fillText('x', b.x + b.w - fs - 4, oy - 7); c.fillText('y', ox + 7, b.y + fs + 6);
+    c.restore();
+  }
+  function gridAt(pt) {
+    for (let i = objects.length - 1; i >= 0; i--) {
+      const o = objects[i]; if (o.type !== 'grid') continue;
+      const b = getBounds(o); if (pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h) return o;
+    }
+    return null;
+  }
+  function snapToGrid(pt) {
+    const g = gridAt(pt); if (!g) return null;
+    const { u, ox, oy } = gridGeom(g), gx = Math.round((pt.x - ox) / u), gy = Math.round((oy - pt.y) / u);
+    return { x: ox + gx * u, y: oy - gy * u, gx, gy };
+  }
+  function drawGridPoint(o, c) {
+    c.save(); c.fillStyle = o.color || '#111';
+    c.beginPath(); c.arc(o.x, o.y, 4.2, 0, Math.PI * 2); c.fill();
+    const label = `(${String(o.gx).replace('-', '−')}, ${String(o.gy).replace('-', '−')})`;
+    c.font = '700 12px Inter, sans-serif'; c.textBaseline = 'bottom';
+    c.lineWidth = 3.5; c.strokeStyle = 'rgba(255,255,255,0.95)'; c.lineJoin = 'round';
+    c.strokeText(label, o.x + 6, o.y - 5); c.fillText(label, o.x + 6, o.y - 5);
+    c.restore();
+  }
+  document.getElementById('addGridBtn').onclick = () => {
+    shapesMenu.classList.remove('show');
+    pushUndo();
+    const s = Math.min(window.innerWidth, window.innerHeight) * 0.5 / cam.z, u = Math.max(14, Math.round(s / 12)), n = 6;
+    const qr = document.getElementById('questionCard').getBoundingClientRect();
+    const half = n * u * cam.z, cx = Math.max(window.innerWidth * 0.66, qr.right + half + 40);
+    const c = screenToWorld(cx, Math.max(qr.top + half, window.innerHeight * 0.5));
+    objects.push({ id: 'o_' + Date.now(), type: 'grid', u, x: c.x - n * u, y: c.y - n * u, w: 2 * n * u, h: 2 * n * u });
+    if (!['pen', 'shape'].includes(tool)) setTool('pen');
+    renderBoard(); saveWorkspace(); broadcastBoard();
+    toast('Tap inside the grid to drop a point · lines snap to the grid · move it with Select (drag its edge)');
+  };
+
+  /* ==================== GEOMETRY MARKS ==================== */
+  function drawMark(o, c) {
+    c.save(); c.strokeStyle = o.color || '#111'; c.fillStyle = o.color || '#111'; c.lineWidth = o.width || 2.2; c.lineCap = 'round'; c.lineJoin = 'round';
+    const len = Math.hypot(o.w, o.h) || 1, ux = o.w / len, uy = o.h / len;
+    if (o.type === 'arrow') {
+      const hl = Math.min(16, len * 0.4) + (o.width || 2) * 1.5, ex = o.x + o.w, ey = o.y + o.h;
+      c.beginPath(); c.moveTo(o.x, o.y); c.lineTo(ex - ux * hl * 0.6, ey - uy * hl * 0.6); c.stroke();
+      c.beginPath(); c.moveTo(ex, ey); c.lineTo(ex - ux * hl - uy * hl * 0.5, ey - uy * hl + ux * hl * 0.5); c.lineTo(ex - ux * hl + uy * hl * 0.5, ey - uy * hl - ux * hl * 0.5); c.closePath(); c.fill();
+    } else if (o.type === 'rightMark') {
+      // a small square in the corner; you drag from the corner into the angle
+      const s = Math.max(6, len / Math.SQRT2), a = { x: (ux - uy) / Math.SQRT2 * s, y: (uy + ux) / Math.SQRT2 * s }, b = { x: (ux + uy) / Math.SQRT2 * s, y: (uy - ux) / Math.SQRT2 * s };
+      c.beginPath(); c.moveTo(o.x + a.x, o.y + a.y); c.lineTo(o.x + a.x + b.x, o.y + a.y + b.y); c.lineTo(o.x + b.x, o.y + b.y); c.stroke();
+    } else if (o.type === 'tick') {
+      // equal-length marks across a side; you drag along the side
+      const mx = o.x + o.w / 2, my = o.y + o.h / 2, tl = 8, n = o.n || 1, gap = 5;
+      for (let k = 0; k < n; k++) {
+        const off = (k - (n - 1) / 2) * gap, cx = mx + ux * off, cy = my + uy * off;
+        c.beginPath(); c.moveTo(cx - uy * tl, cy + ux * tl); c.lineTo(cx + uy * tl, cy - ux * tl); c.stroke();
+      }
+    } else if (o.type === 'angleArc') {
+      c.beginPath(); c.arc(o.x, o.y, o.r, o.a0, o.a1, o.ccw); c.stroke();
+    }
+    c.restore();
+  }
+  function arcAngles(o, pt) {
+    // the arc starts where you first left the vertex and follows your finger around
+    const a = Math.atan2(pt.y - o.y, pt.x - o.x);
+    let d = a - o.a0; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+    o.sweep = (o.sweep === undefined ? 0 : o.sweep);
+    let prev = o.sweep, cand = d; while (cand - prev > Math.PI) cand -= 2 * Math.PI; while (cand - prev < -Math.PI) cand += 2 * Math.PI;
+    o.sweep = Math.max(-2 * Math.PI + 0.05, Math.min(2 * Math.PI - 0.05, cand));
+    o.a1 = o.a0 + o.sweep; o.ccw = o.sweep < 0;
+  }
+
+  /* ==================== LASSO / MULTI-SELECT ==================== */
+  var multiSel = [];
+  function clearSel() { selectedId = null; multiSel = []; }
+  function selObjs() { const ids = multiSel.length ? multiSel : (selectedId ? [selectedId] : []); return objects.filter(o => ids.includes(o.id)); }
+  function selBounds(list = selObjs()) {
+    if (!list.length) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    list.forEach(o => { const b = getBounds(o); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); });
+    return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+  }
+  function cloneSel() { const m = {}; selObjs().forEach(o => m[o.id] = JSON.parse(JSON.stringify(o))); return m; }
+  function moveObjFrom(o, s, dx, dy) {
+    if (s.points) o.points = s.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
+    else { o.x = s.x + dx; o.y = s.y + dy; }
+  }
+  function scaleObjFrom(o, s, ox, oy, k) {
+    if (s.points) { o.points = s.points.map(p => ({ x: ox + (p.x - ox) * k, y: oy + (p.y - oy) * k })); return; }
+    o.x = ox + (s.x - ox) * k; o.y = oy + (s.y - oy) * k;
+    if (s.w !== undefined) { o.w = s.w * k; o.h = s.h * k; }
+    if (s.r !== undefined) o.r = s.r * k;
+    if (s.fontSize) o.fontSize = Math.max(6, Math.round(s.fontSize * k));
+  }
+  function pointInPoly(p, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i], b = poly[j];
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+    }
+    return inside;
+  }
+  function finishLasso(poly) {
+    clearSel();
+    if (poly.length < 4) return;
+    const got = objects.filter(o => {
+      if (o.type === 'pin') return false;
+      if (o.points) { const n = o.points.filter(p => pointInPoly(p, poly)).length; return n > o.points.length * 0.5; }
+      const b = getBounds(o); return pointInPoly({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, poly);
+    });
+    if (got.length === 1) selectedId = got[0].id;
+    else if (got.length > 1) multiSel = got.map(o => o.id);
+  }
+  var boardClip = null, clipToken = '', clipNoSys = false;
+  function newId() { return 'o_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function pasteObjs(list, dx, dy) {
+    if (!list || !list.length) return;
+    pushUndo();
+    const ids = [];
+    list.forEach(s => { const o = JSON.parse(JSON.stringify(s)); o.id = newId(); o.onDiagram = false; moveObjFrom(o, s, dx, dy); objects.push(o); ids.push(o.id); });
+    clearSel(); if (ids.length === 1) selectedId = ids[0]; else multiSel = ids;
+    if (tool !== 'select') setTool('select');
+    renderBoard(); saveWorkspace(); broadcastBoard();
+  }
+  function duplicateSel() { const l = selObjs(); if (l.length) pasteObjs(l, 24 / cam.z, 24 / cam.z); }
+  function deleteSel() {
+    const ids = selObjs().map(o => o.id); if (!ids.length) return;
+    pushUndo(); objects = objects.filter(o => !ids.includes(o.id)); clearSel();
+    renderBoard(); saveWorkspace(); broadcastBoard();
+  }
+  function copySel() {
+    const l = selObjs(); if (!l.length) return false;
+    boardClip = JSON.parse(JSON.stringify(l)); boardClip.n = 0;
+    clipToken = 'satwb-copy-' + Date.now();
+    clipNoSys = false;
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(clipToken).catch(() => { clipNoSys = true; }); else clipNoSys = true;
+    toast(l.length > 1 ? `Copied ${l.length} items` : 'Copied');
+    return true;
+  }
+  function pasteClip() { if (!boardClip) return; boardClip.n++; pasteObjs(boardClip, 24 * boardClip.n / cam.z, 24 * boardClip.n / cam.z); }
+  var selBar = document.getElementById('selBar');
+  document.getElementById('selDup').onclick = duplicateSel;
+  document.getElementById('selCopy').onclick = () => copySel();
+  document.getElementById('selDel').onclick = deleteSel;
+  function placeSelBar() {
+    const b = (tool === 'select' && !(pState && /move|resize|lasso/.test(pState.mode))) ? selBounds() : null;
+    if (!b || window.__satReplayObjs) { selBar.classList.remove('show'); return; }
+    const sx = cam.x + (b.x + b.w / 2) * cam.z, sy = cam.y + b.y * cam.z;
+    selBar.classList.add('show');
+    const w = selBar.offsetWidth || 180;
+    selBar.style.left = Math.max(6, Math.min(window.innerWidth - w - 6, sx - w / 2)) + 'px';
+    selBar.style.top = Math.max(56, sy - 46) + 'px';
+  }
+
+  /* ==================== COPY THE QUESTION'S FIGURE ==================== */
+  document.getElementById('diagCopyBtn').onclick = () => {
+    const box = document.getElementById('diagramBox');
+    const img = box.querySelector('img'), svg = box.querySelector('svg');
+    const place = (src, w0, h0) => {
+      const r = box.getBoundingClientRect(), qr = document.getElementById('questionCard').getBoundingClientRect();
+      const pos = screenToWorld(Math.max(r.right, qr.right) + 40, r.top);
+      const w = Math.min(520, w0 * 1.6), h = w * (h0 / w0);
+      pushUndo();
+      const id = newId();
+      objects.push({ id, type: 'image', src, x: pos.x, y: pos.y, w, h });
+      clearSel(); selectedId = id; setTool('select'); renderBoard(); saveWorkspace(); broadcastBoard();
+      toast('Figure copied — draw on it, drag to move, corner to resize');
+    };
+    if (img) { const im = new Image(); im.onload = () => place(img.src, im.width || 300, im.height || 200); im.src = img.src; return; }
+    if (!svg) { toast('This question has no figure'); return; }
+    const cl = svg.cloneNode(true);
+    const vb = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width ? svg.viewBox.baseVal : null;
+    const w0 = svg.width.baseVal.value || (vb && vb.width) || 300, h0 = svg.height.baseVal.value || (vb && vb.height) || 200;
+    cl.setAttribute('xmlns', 'http://www.w3.org/2000/svg'); cl.setAttribute('width', w0 * 3); cl.setAttribute('height', h0 * 3);
+    if (!cl.getAttribute('viewBox')) cl.setAttribute('viewBox', `0 0 ${w0} ${h0}`);
+    const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(cl));
+    const im = new Image();
+    im.onload = () => {
+      // turn it into a PNG so the board can still be exported
+      const cv = document.createElement('canvas'); cv.width = w0 * 3; cv.height = h0 * 3;
+      const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(im, 0, 0, cv.width, cv.height);
+      let src; try { src = cv.toDataURL('image/png'); } catch { src = url; }
+      place(src, w0, h0);
+    };
+    im.onerror = () => toast('Could not copy this figure');
+    im.src = url;
+  };
+
+  /* ==================== SHORTCUT SHEET ==================== */
+  function keyName(code) { return String(code || '').replace(/^Key/, '').replace(/^Digit/, ''); }
+  function openKeysHelp() {
+    const kb = settings.keybinds;
+    const rows = [
+      ['Pen', kb.pen], ['Highlighter', kb.highlighter], ['Eraser', kb.eraser], ['Text', kb.text], ['Laser', kb.laser],
+      ['Select / lasso', kb.select], ['Cursor (use Desmos etc.)', kb.cursor], ['Formulas', kb.formulas], ['Desmos', kb.desmos], ['Zen mode', kb.zen]
+    ].map(([n, k]) => `<tr><td>${n}</td><td><kbd>${keyName(k)}</kbd></td></tr>`).join('');
+    document.getElementById('keysHelpBody').innerHTML = `
+      <div class="kh-col"><h4>Tools</h4><table>${rows}</table></div>
+      <div class="kh-col"><h4>Board</h4><table>
+        <tr><td>Undo / redo (only your own changes)</td><td><kbd>Ctrl Z</kbd> <kbd>Ctrl Y</kbd></td></tr>
+        <tr><td>Move the board</td><td>hold <kbd>Space</kbd> + drag</td></tr>
+        <tr><td>Zoom</td><td><kbd>Ctrl +</kbd> <kbd>Ctrl −</kbd> <kbd>Ctrl 0</kbd></td></tr>
+        <tr><td>Lasso: Select tool, drag around things</td><td><kbd>${keyName(kb.select)}</kbd></td></tr>
+        <tr><td>Select everything</td><td><kbd>Ctrl A</kbd></td></tr>
+        <tr><td>Copy / paste / duplicate</td><td><kbd>Ctrl C</kbd> <kbd>Ctrl V</kbd> <kbd>Ctrl D</kbd></td></tr>
+        <tr><td>Delete selection</td><td><kbd>Del</kbd></td></tr>
+        <tr><td>Close a window / finish text</td><td><kbd>Esc</kbd></td></tr>
+        <tr><td>This sheet</td><td><kbd>?</kbd></td></tr>
+      </table>
+      <h4>Math in text</h4><table>
+        <tr><td><code>x^2</code> <code>x_1</code></td><td>power, index</td></tr>
+        <tr><td><code>sqrt(3)</code> <code>sqrt x</code></td><td>root</td></tr>
+        <tr><td><code>3/4</code> <code>(x+1)/(x-2)</code></td><td>fraction</td></tr>
+        <tr><td><code>pi theta deg</code></td><td>π θ °</td></tr>
+        <tr><td><code>&lt;= &gt;= != +- *</code></td><td>≤ ≥ ≠ ± ·</td></tr>
+        <tr><td><code>17*23=</code> then Enter</td><td>answer appears after =</td></tr>
+      </table></div>
+      <div class="kh-col"><h4>iPad / phone</h4><table>
+        <tr><td>Apple Pencil</td><td>draws</td></tr>
+        <tr><td>One finger (after Pencil is used)</td><td>moves the board</td></tr>
+        <tr><td>Two fingers</td><td>move + zoom</td></tr>
+        <tr><td>Press and hold</td><td>react / "I'm lost here"</td></tr>
+        <tr><td>Selection buttons</td><td>duplicate, copy, delete</td></tr>
+      </table></div>`;
+    document.getElementById('keysHelp').classList.add('show');
+  }
+  document.getElementById('keysHelpBtn').onclick = openKeysHelp;
+  document.getElementById('keysHelpClose').onclick = () => document.getElementById('keysHelp').classList.remove('show');
+  document.getElementById('keysHelp').addEventListener('pointerdown', (e) => { if (e.target.id === 'keysHelp') e.currentTarget.classList.remove('show'); });
+
   // iPad / touch screens: the canvas ignores pointers and the stage listens instead (see TOUCH / IPAD INPUT)
   const touchUI = window.matchMedia('(pointer: coarse)').matches || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   function capturePtr(e) { try { (touchUI ? boardStage : boardCanvas).setPointerCapture(e.pointerId); } catch {} }
@@ -1204,6 +1860,11 @@
 
     const pt = screenToWorld(e.clientX, e.clientY);
     if (spaceHeld || e.button === 1) { pState = { mode: 'pan', sx: e.clientX - cam.x, sy: e.clientY - cam.y }; capturePtr(e); return; }
+    if (replay) stopReplay();
+    // a "lost here" pin: tap it to mark it explained
+    const pin = tool !== 'select' && objects.slice().reverse().find(o => o.type === 'pin' && Math.hypot(o.x - pt.x, o.y - pt.y) < 18 / cam.z);
+    if (pin) { openPinMenu(pin, e.clientX, e.clientY); return; }
+    armHold(e);
 
     if (tool === 'text') {
       if (textOpen()) { commitText(); return; }
@@ -1219,10 +1880,17 @@
     }
     if (tool === 'eraser') {
       const hit = hitTest(pt);
-      if (hit) { pushUndo(); objects = objects.filter(o => o.id !== hit.id); renderBoard(); saveWorkspace(); broadcastBoard(); }
+      pushUndo();
+      if (hit) { objects = objects.filter(o => o.id !== hit.id); renderBoard(); saveWorkspace(); broadcastBoard(); }
       pState = { mode: 'erase' }; return;
     }
     if (tool === 'select') {
+      if (multiSel.length) {
+        const mb = selBounds();
+        if (mb && Math.hypot(pt.x - (mb.x + mb.w + 4), pt.y - (mb.y + mb.h + 4)) < 16 / cam.z) { pushUndo(); pState = { mode: 'mresize', box: mb, orig: cloneSel() }; capturePtr(e); return; }
+        if (mb && pt.x >= mb.x - 6 && pt.x <= mb.x + mb.w + 6 && pt.y >= mb.y - 6 && pt.y <= mb.y + mb.h + 6) { pushUndo(); pState = { mode: 'mmove', sx: pt.x, sy: pt.y, orig: cloneSel() }; capturePtr(e); return; }
+        multiSel = [];
+      }
       if (selectedId) {
         const sel = objects.find(o => o.id === selectedId);
         if (sel && sel.type !== 'stroke') {
@@ -1237,12 +1905,16 @@
       if (hit) {
         pushUndo(); pState = { mode: 'move', obj: hit, sx: pt.x, sy: pt.y, ox: hit.x, oy: hit.y, opts: hit.points ? hit.points.map(p => ({ ...p })) : null };
         capturePtr(e);
-      }
+      } else { pState = { mode: 'lasso', pts: [pt] }; capturePtr(e); }
       return;
     }
     if (tool === 'shape') {
       pushUndo();
-      const obj = { id: 'o_' + Date.now(), type: shapeType === 'dashed' ? 'line' : shapeType, dashed: shapeType === 'dashed', onDiagram: isInsideDiagram(pt), x: pt.x, y: pt.y, w: 1, h: 1, color: inkColor, width: inkWidth };
+      const SNAPS = ['line', 'dashed', 'arrow', 'rightTriangle', 'isoTriangle', 'angleArc'];
+      const sp = (SNAPS.includes(shapeType) && snapToGrid(pt)) || pt;
+      const obj = { id: newId(), type: shapeType === 'dashed' ? 'line' : shapeType === 'tick2' ? 'tick' : shapeType, dashed: shapeType === 'dashed', onDiagram: isInsideDiagram(pt), x: sp.x, y: sp.y, w: 1, h: 1, color: inkColor, width: inkWidth };
+      if (shapeType === 'tick2') obj.n = 2;
+      if (shapeType === 'angleArc') { delete obj.w; delete obj.h; obj.r = 0; obj.a0 = null; }
       objects.push(obj); pState = { mode: 'shape', obj }; capturePtr(e); return;
     }
 
@@ -1266,6 +1938,7 @@
       laserTrail.push({ x: pt.x, y: pt.y, t: Date.now() });
       renderBoard(); return;
     }
+    if (holdStart && Math.hypot(e.clientX - holdStart.x, e.clientY - holdStart.y) > 9) clearHold();
     if (!pState) return;
     if (pState.mode === 'textTap') {
       // dragging in text mode moves the board instead
@@ -1295,8 +1968,27 @@
         }, delay);
       }
       renderBoard();
+    } else if (pState.mode === 'lasso') {
+      const last = pState.pts[pState.pts.length - 1];
+      if (Math.hypot(pt.x - last.x, pt.y - last.y) > 3 / cam.z) { pState.pts.push(pt); renderBoard(); }
+    } else if (pState.mode === 'mmove' || pState.mode === 'mresize') {
+      if (pState.mode === 'mmove') { const dx = pt.x - pState.sx, dy = pt.y - pState.sy; objects.forEach(o => { const s = pState.orig[o.id]; if (s) moveObjFrom(o, s, dx, dy); }); }
+      else {
+        const bx = pState.box, k = Math.max(0.1, ((pt.x - bx.x) / bx.w + (pt.y - bx.y) / bx.h) / 2);
+        objects.forEach(o => { const s = pState.orig[o.id]; if (s) scaleObjFrom(o, s, bx.x, bx.y, k); });
+      }
+      if (roomChannel && Date.now() - lastLiveStrokeSend > 80) { lastLiveStrokeSend = Date.now(); broadcastBoard(); }
+      renderBoard();
+    } else if (pState.mode === 'shape' && pState.obj.type === 'angleArc') {
+      const o = pState.obj, d = Math.hypot(pt.x - o.x, pt.y - o.y);
+      if (o.a0 == null) { if (d > 12 / cam.z) { o.r = d; o.a0 = Math.atan2(pt.y - o.y, pt.x - o.x); o.a1 = o.a0; o.sweep = 0; } }
+      else arcAngles(o, pt);
+      if (roomChannel && o.a0 != null && Date.now() - lastLiveStrokeSend > 65) { lastLiveStrokeSend = Date.now(); broadcastObject(o); }
+      renderBoard();
     } else if (pState.mode === 'shape') {
-      pState.obj.w = pt.x - pState.obj.x; pState.obj.h = pt.y - pState.obj.y;
+      const SN = ['line', 'arrow', 'rightTriangle', 'isoTriangle'];
+      const ep = (SN.includes(pState.obj.type) && snapToGrid(pt)) || pt;
+      pState.obj.w = ep.x - pState.obj.x; pState.obj.h = ep.y - pState.obj.y;
       if (roomChannel && Date.now() - lastLiveStrokeSend > 65) {
         lastLiveStrokeSend = Date.now();
         broadcastObject(pState.obj);
@@ -1324,32 +2016,37 @@
   }
 
   function onBoardUp() {
+    clearHold();
     laserActive = false;
     if (pState && pState.mode === 'textTap') { const p = pState; pState = null; openText(p.sx, p.sy, p.hit); return; }
+    if (pState && pState.mode === 'lasso') { finishLasso(pState.pts); pState = null; renderBoard(); return; }
+    if (pState && pState.mode === 'shape' && pState.obj.type === 'angleArc' && pState.obj.a0 == null) {
+      const dead = pState.obj; objects = objects.filter(o => o !== dead); undoOpen = null; pState = null; renderBoard(); return;
+    }
+    if (pState && pState.mode === 'stroke' && tool === 'pen' && !pState.snapped) {
+      // a tap inside a coordinate grid drops a labelled point
+      const s = pState.obj, xs = s.points.map(p => p.x), ys = s.points.map(p => p.y);
+      if (Math.max(...xs) - Math.min(...xs) < 12 / cam.z && Math.max(...ys) - Math.min(...ys) < 12 / cam.z) {
+        const g = snapToGrid(s.points[0]);
+        if (g) {
+          const idx = objects.indexOf(s);
+          const pt0 = { id: s.id, type: 'gpt', x: g.x, y: g.y, gx: g.gx, gy: g.gy, color: s.color };
+          if (idx !== -1) objects[idx] = pt0;
+          pState.obj = pt0;
+        }
+      }
+    }
     if (pState) {
       clearTimeout(pState.timer);
       const finishedObj = pState.obj;
       const wasErase = pState.mode === 'erase';
       pState = null;
       saveWorkspace();
-      if (finishedObj && !wasErase) {
-        broadcastObject(finishedObj);
-        if (sb && roomCode && (!tutorLocked || isHost)) {
-          sb.from('rooms').update({
-            current_question_id: currentQ().id,
-            diagram_scale: diagramScale,
-            board_objects: objects,
-            board_widgets: boardWidgets,
-            desmos_state: desmosCalc ? desmosCalc.getState() : savedDesmosState,
-            updated_at: new Date().toISOString()
-          }).eq('room_code', roomCode).then(({ error }) => {
-            if (error) console.warn('Room DB update:', error.message);
-          });
-        }
-      } else {
-        broadcastBoard();
-      }
+      if (finishedObj && !wasErase && objects.includes(finishedObj)) { broadcastObject(finishedObj); broadcastBoard(false, true); }
+      else broadcastBoard();
     }
+    closeUndo();
+    renderBoard();
   }
   function onBoardDblClick(e) {
     const pt = screenToWorld(e.clientX, e.clientY);
@@ -1394,7 +2091,7 @@
     if ((pState.mode === 'stroke' || pState.mode === 'shape') && pState.obj) {
       const dead = pState.obj;
       objects = objects.filter(o => o !== dead && o.id !== dead.id);
-      const u = undoByQ[currentQ().id]; if (u && u.length) u.pop();
+      undoOpen = null;
       if (roomChannel) broadcastBoard(); // peers may have received part of it
     }
     pState = null; laserActive = false; renderBoard();
@@ -1407,7 +2104,7 @@
     if (e.pointerType === 'touch') {
       if (Date.now() - lastPenUp < 400 || (pState && pState.pointerType === 'pen')) return; // palm
       touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (touchPts.size === 2) { cancelActiveStroke(); startPinch(); return; }
+      if (touchPts.size === 2) { clearHold(); cancelActiveStroke(); startPinch(); return; }
       if (touchPts.size > 2 || pinch) return;
       if (!touchesDraw() || tool === 'cursor') {
         pState = { mode: 'pan', sx: e.clientX - cam.x, sy: e.clientY - cam.y, pointerType: 'touch', pointerId: e.pointerId };
@@ -1475,6 +2172,198 @@
   }, { passive: false });
   document.addEventListener('gestureend', (e) => e.preventDefault(), { passive: false });
 
+  /* ==================== FEELINGS: reactions, "I'm lost here", celebrations, replay ==================== */
+  const myName = () => document.getElementById('roomNameInput').value || 'Friend';
+  const fxLayer = document.getElementById('fxLayer');
+  // Emoji floating up from a spot on the board (everyone sees it there)
+  function floatEmoji(wx, wy, emoji, name) {
+    const sx = cam.x + wx * cam.z, sy = cam.y + wy * cam.z;
+    [0, 1, 2].forEach(i => {
+      const d = document.createElement('div');
+      d.className = 'fx-emoji'; d.textContent = emoji;
+      d.style.left = (sx + (i - 1) * 20 + Math.random() * 10 - 5) + 'px'; d.style.top = sy + 'px';
+      d.style.fontSize = (i === 1 ? 42 : 28) + 'px'; d.style.animationDelay = (i === 1 ? 0 : 140 + i * 60) + 'ms';
+      fxLayer.appendChild(d); setTimeout(() => d.remove(), 2300);
+    });
+    if (name) {
+      const n = document.createElement('div'); n.className = 'fx-name'; n.textContent = name;
+      n.style.left = sx + 'px'; n.style.top = (sy + 24) + 'px';
+      fxLayer.appendChild(n); setTimeout(() => n.remove(), 1900);
+    }
+  }
+  function sendReaction(pt, emoji) {
+    floatEmoji(pt.x, pt.y, emoji, null);
+    if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'react', payload: { sender: peerId, questionId: currentQ().id, wx: pt.x, wy: pt.y, emoji, name: myName() } });
+  }
+
+  // Picker: press and hold on the board (or the 😀 button)
+  const picker = document.getElementById('reactPicker');
+  let pickerAt = null, holdTimer = null, holdStart = null;
+  function openPicker(sx, sy) {
+    pickerAt = screenToWorld(sx, sy);
+    picker.classList.add('show');
+    const w = picker.offsetWidth, h = picker.offsetHeight;
+    picker.style.left = Math.max(6, Math.min(window.innerWidth - w - 6, sx - w / 2)) + 'px';
+    picker.style.top = (sy - h - 18 > 8 ? sy - h - 18 : sy + 22) + 'px';
+  }
+  const closePicker = () => picker.classList.remove('show');
+  picker.querySelectorAll('button').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    if (!pickerAt) return closePicker();
+    if (b.dataset.lost) addLostPin(pickerAt); else sendReaction(pickerAt, b.dataset.r);
+    closePicker();
+  });
+  document.getElementById('reactBtn').onclick = () => openPicker(window.innerWidth / 2, window.innerHeight / 2);
+  window.addEventListener('pointerdown', (e) => {
+    if (picker.classList.contains('show') && !picker.contains(e.target) && e.target.id !== 'reactBtn') closePicker();
+    if (pinMenu.classList.contains('show') && !pinMenu.contains(e.target)) pinMenu.classList.remove('show');
+  }, true);
+  function clearHold() { clearTimeout(holdTimer); holdTimer = null; holdStart = null; }
+  function armHold(e) {
+    clearHold();
+    if (tool === 'select') return; // holding still is how you start moving things
+    holdStart = { x: e.clientX, y: e.clientY };
+    holdTimer = setTimeout(() => {
+      const h = holdStart; clearHold();
+      if (!h) return;
+      if (pState && (pState.mode === 'stroke' || pState.mode === 'shape')) cancelActiveStroke(); // drop the dot
+      pState = null; laserActive = false;
+      openPicker(h.x, h.y);
+    }, 550);
+  }
+
+  // "I'm lost here" pins: stay on the board until someone taps ✓ Explained
+  function addLostPin(pt) {
+    pushUndo();
+    objects.push({ id: 'o_' + Date.now(), type: 'pin', x: pt.x, y: pt.y, by: myName() });
+    renderBoard(); saveWorkspace(); broadcastBoard();
+    sendReaction(pt, '❓');
+  }
+  function drawPin(o, c) {
+    const z = cam.z, r = 13 / z;
+    c.save();
+    c.beginPath(); c.arc(o.x, o.y, r + 3 / z, 0, Math.PI * 2); c.fillStyle = 'rgba(245,158,11,0.25)'; c.fill();
+    c.beginPath(); c.arc(o.x, o.y, r, 0, Math.PI * 2); c.fillStyle = '#f59e0b'; c.fill();
+    c.lineWidth = 2 / z; c.strokeStyle = '#fff'; c.stroke();
+    c.fillStyle = '#fff'; c.font = `800 ${17 / z}px Inter, sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('?', o.x, o.y + 1 / z);
+    const label = `${o.by || 'Someone'} is lost here`;
+    c.font = `700 ${11 / z}px Inter, sans-serif`;
+    const w = c.measureText(label).width + 12 / z;
+    c.fillStyle = '#fef3c7'; c.fillRect(o.x - w / 2, o.y + r + 4 / z, w, 17 / z);
+    c.fillStyle = '#92400e'; c.fillText(label, o.x, o.y + r + 12.5 / z);
+    c.restore();
+  }
+  const pinMenu = document.getElementById('pinMenu');
+  let pinMenuFor = null;
+  function openPinMenu(pin, sx, sy) {
+    pinMenuFor = pin;
+    pinMenu.querySelector('.pm-text').textContent = `❓ ${pin.by || 'Someone'} is lost here`;
+    pinMenu.classList.add('show');
+    const w = pinMenu.offsetWidth;
+    pinMenu.style.left = Math.max(6, Math.min(window.innerWidth - w - 6, sx - w / 2)) + 'px';
+    pinMenu.style.top = Math.max(8, sy - 64) + 'px';
+  }
+  document.getElementById('pinCloseBtn').onclick = () => pinMenu.classList.remove('show');
+  document.getElementById('pinDoneBtn').onclick = () => {
+    const pin = pinMenuFor; pinMenu.classList.remove('show');
+    if (!pin) return;
+    pushUndo(); objects = objects.filter(o => o.id !== pin.id);
+    renderBoard(); saveWorkspace(); broadcastBoard();
+    sendReaction({ x: pin.x, y: pin.y }, '✅');
+  };
+
+  // Celebrations: everyone in the room sees them
+  let streak = 0;
+  const confCanvas = document.getElementById('confettiCanvas'), confCtx = confCanvas.getContext('2d');
+  let confParts = [], confRaf = null;
+  function confetti(n) {
+    const W = window.innerWidth, H = window.innerHeight, dpr = window.devicePixelRatio || 1;
+    if (!confRaf) { confCanvas.width = W * dpr; confCanvas.height = H * dpr; confCtx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+    const cols = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
+    for (let i = 0; i < n; i++) confParts.push({ x: W / 2 + (Math.random() - 0.5) * W * 0.45, y: H * 0.3, vx: (Math.random() - 0.5) * 10, vy: -Math.random() * 10 - 3,
+      r: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.3, w: 6 + Math.random() * 5, h: 9 + Math.random() * 7, c: cols[i % cols.length], life: 0 });
+    if (!confRaf) confRaf = requestAnimationFrame(confStep);
+  }
+  function confStep() {
+    confCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    confParts.forEach(p => {
+      p.vy += 0.3; p.vx *= 0.99; p.x += p.vx; p.y += p.vy; p.r += p.vr; p.life++;
+      confCtx.save(); confCtx.translate(p.x, p.y); confCtx.rotate(p.r); confCtx.globalAlpha = Math.max(0, 1 - p.life / 140);
+      confCtx.fillStyle = p.c; confCtx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); confCtx.restore();
+    });
+    confParts = confParts.filter(p => p.life < 140 && p.y < window.innerHeight + 40);
+    if (confParts.length) confRaf = requestAnimationFrame(confStep);
+    else { confRaf = null; confCtx.clearRect(0, 0, window.innerWidth, window.innerHeight); }
+  }
+  function showBanner(text) {
+    const b = document.getElementById('celebrateBanner');
+    b.textContent = text; b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
+    clearTimeout(showBanner.t); showBanner.t = setTimeout(() => b.classList.remove('show'), 2700);
+  }
+  // kind: correct (1st try) · streak (3+ in a row) · comeback (beat a Wrong-list question) · gotthere (right after a miss)
+  function celebrate(kind, who, n) {
+    const name = who || 'You';
+    const text = kind === 'comeback' ? `💪 Comeback! ${name} beat a Wrong-list question`
+      : kind === 'streak' ? `🔥 ${name}: ${n} in a row!`
+      : kind === 'gotthere' ? `✓ ${name} got there`
+      : `🎉 ${name} got it right!`;
+    showBanner(text);
+    confetti(kind === 'gotthere' ? 35 : kind === 'correct' ? 110 : 220);
+  }
+
+  // Replay: redraw the board in the order it was written, stroke by stroke
+  let replay = null;
+  const replayBar = document.getElementById('replayBar');
+  function startReplay(share = false, speed) {
+    const list = objects.filter(o => o.type !== 'pin');
+    if (!list.length) { toast('Nothing on the board to replay yet'); return; }
+    stopReplay();
+    replay = { list, i: 0, k: 0, gap: 0, end: 0, paused: false, speed: speed || replaySpeed };
+    document.getElementById('rpPause').textContent = '⏸';
+    replayBar.classList.add('show');
+    replay.raf = requestAnimationFrame(replayTick);
+    if (share && roomChannel) roomChannel.send({ type: 'broadcast', event: 'replay_start', payload: { sender: peerId, questionId: currentQ().id, name: myName(), speed: replay.speed } });
+  }
+  let replaySpeed = 1;
+  function replayTick() {
+    const r = replay; if (!r) return;
+    if (!r.paused) {
+      if (r.i >= r.list.length) { if (++r.end > 50) { stopReplay(); return; } }
+      else if (r.gap > 0) r.gap -= r.speed;
+      else {
+        const o = r.list[r.i];
+        const n = o.type === 'stroke' ? o.points.length : o.type === 'text' ? (o.text || '').length : 1;
+        r.k += o.type === 'stroke' ? 2.5 * r.speed : o.type === 'text' ? 0.6 * r.speed : 1;
+        if (r.k >= n) { r.i++; r.k = 0; r.gap = 7; }
+      }
+      const shown = r.list.slice(0, r.i);
+      const cur = r.list[r.i];
+      if (cur && r.k > 0) {
+        if (cur.type === 'stroke') shown.push({ ...cur, points: cur.points.slice(0, Math.max(2, Math.ceil(r.k))) });
+        else if (cur.type === 'text') shown.push({ ...cur, text: (cur.text || '').slice(0, Math.ceil(r.k)) });
+      }
+      window.__satReplayObjs = shown;
+      renderBoard();
+    }
+    r.raf = requestAnimationFrame(replayTick);
+  }
+  function stopReplay() {
+    if (replay) cancelAnimationFrame(replay.raf);
+    replay = null; window.__satReplayObjs = null;
+    replayBar.classList.remove('show');
+    renderBoard();
+  }
+  document.getElementById('replayBtn').onclick = () => startReplay(false);
+  document.getElementById('rpStop').onclick = stopReplay;
+  document.getElementById('rpPause').onclick = (e) => { if (!replay) return; replay.paused = !replay.paused; e.target.textContent = replay.paused ? '▶' : '⏸'; };
+  document.getElementById('rpSpeed').onclick = (e) => {
+    replaySpeed = replaySpeed === 1 ? 2 : replaySpeed === 2 ? 4 : 1;
+    if (replay) replay.speed = replaySpeed;
+    e.target.textContent = replaySpeed + '×';
+  };
+  document.getElementById('rpShare').onclick = () => { if (!roomChannel) { toast('Join a room to replay for everyone'); return; } startReplay(true); };
+
   /* ==================== TEXT TOOL ==================== */
   // The box sits exactly where the text will be drawn and at the same on-screen size,
   // so what you type is what lands on the board (at any zoom).
@@ -1524,6 +2413,16 @@
     window.visualViewport.addEventListener('resize', keepTextVisible);
     window.visualViewport.addEventListener('scroll', layoutText);
   }
+  let textLiveTimer = null, textLiveId = null;
+  function sendTextLive(done = false) {
+    if (!roomChannel || (tutorLocked && !isHost)) return;
+    clearTimeout(textLiveTimer);
+    const send = () => roomChannel.send({ type: 'broadcast', event: 'text_live', payload: done
+      ? { sender: peerId, questionId: currentQ().id, done: true }
+      : { sender: peerId, questionId: currentQ().id, id: textLiveId, x: textTargetWorld.x, y: textTargetWorld.y, text: textBox.value, fontSize: textFont, color: textColor,
+          name: document.getElementById('roomNameInput').value || 'Friend' } });
+    if (done) send(); else textLiveTimer = setTimeout(send, 120);
+  }
   function openText(sx, sy, existing = null) {
     editingObj = existing || null;
     window.__satEditingText = editingObj;
@@ -1537,19 +2436,41 @@
       textColor = inkColor; textBox.value = '';
     }
     textBox.style.display = 'block'; symBar.classList.add('show');
-    layoutText(); renderBoard();
+    textLiveId = editingObj ? editingObj.id : null;
+    layoutText(); renderBoard(); sendTextLive();
     try { textBox.focus({ preventScroll: true }); } catch { textBox.focus(); }
     const n = textBox.value.length; textBox.setSelectionRange(n, n);
     setTimeout(keepTextVisible, 350);
   }
   function closeText() {
+    sendTextLive(true);
     textBox.style.display = 'none'; symBar.classList.remove('show');
     window.__satEditingText = null; editingObj = null;
     if (document.activeElement === textBox) textBox.blur();
   }
+  // "17*23=" -> "17*23=391": arithmetic ending in "=" gets its answer when the text is placed
+  function quickCalc(text) {
+    return text.split('\n').map(line => {
+      const m = line.match(/^(.*?)([^=]*)=\s*$/);
+      if (!m) return line;
+      const expr = m[2].trim();
+      if (!expr || !/[-+*\/^%]|sqrt|pi/.test(expr) || !/^[\d\s.+\-*\/^()%]*$/.test(expr.replace(/sqrt|pi/g, ''))) return line;
+      let js = expr.replace(/\^/g, '**').replace(/(\d+(?:\.\d+)?)%/g, '($1/100)')
+        .replace(/(\d|\))\s*(?=\(|sqrt|pi)/g, '$1*').replace(/(pi)\s*(?=[\d(]|sqrt|pi)/g, '$1*').replace(/\)\s*(?=\d)/g, ')*')
+        .replace(/sqrt/g, 'Math.sqrt').replace(/pi/g, 'Math.PI');
+      let r; try { r = Function('"use strict";return (' + js + ')')(); } catch { return line; }
+      if (typeof r !== 'number' || !isFinite(r)) return line;
+      let out = Math.abs(r - Math.round(r)) < 1e-9 ? String(Math.round(r)) : String(parseFloat(r.toFixed(4)));
+      if (!Number.isInteger(+out) && !/^\s*-?\d+\s*\/\s*\d+\s*$/.test(expr) && !/sqrt|pi/.test(expr)) {
+        for (let d = 2; d <= 100; d++) { const n = Math.round(r * d); if (Math.abs(r - n / d) < 1e-9) { out += ` = ${n}/${d}`; break; } }
+      }
+      return line.replace(/\s*$/, '') + (/\s=$/.test(line.replace(/\s*$/, '')) ? ' ' : '') + out.replace('-', '−');
+    }).join('\n');
+  }
+  window.__quickCalc = quickCalc;
   function commitText() {
     if (!textOpen()) return;
-    const val = textBox.value.replace(/\s+$/, '');
+    const val = quickCalc(textBox.value.replace(/\s+$/, ''));
     const ed = editingObj;
     closeText();
     if (ed) {
@@ -1564,7 +2485,7 @@
     renderBoard(); saveWorkspace(); broadcastBoard();
   }
   function cancelText() { closeText(); renderBoard(); }
-  textBox.addEventListener('input', layoutText);
+  textBox.addEventListener('input', () => { layoutText(); sendTextLive(); });
   textBox.addEventListener('keydown', (e) => {
     e.stopPropagation(); // no tool shortcuts while typing
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); commitText(); }
@@ -1586,6 +2507,7 @@
       if (b.id === 'cancelTextBtn') return cancelText();
       if (b.dataset.size) { textFont = Math.round(Math.max(8, Math.min(240, textFont * (b.dataset.size === '1' ? 1.2 : 1 / 1.2)))); layoutText(); }
       else if (b.dataset.sym) insertAtCaret(b.dataset.sym);
+      sendTextLive();
       if (document.activeElement !== textBox) { try { textBox.focus({ preventScroll: true }); } catch { textBox.focus(); } }
     });
   });
@@ -1707,9 +2629,15 @@
   }
 
   // Load a card's Desmos lines into the board calculator (ids card0..card7 are reused, so pressing again replaces them).
+  const desmosReadyCbs = [];
+  function whenDesmosReady(cb) { if (desmosCalc) cb(); else desmosReadyCbs.push(cb); }
+  function flushDesmosReady() { desmosReadyCbs.splice(0).forEach(cb => { try { cb(); } catch (e) { console.warn(e); } }); }
   function putInDesmos(lines, opts = {}) {
     if (!document.getElementById('desmosBoardWidget')) spawnDesmosOnBoard();
-    if (!desmosCalc) { toast('Desmos is not loaded (offline?)'); return; }
+    if (!desmosCalc) {
+      if (typeof window.Desmos === 'undefined') { toast('Desmos is not loaded (offline?)'); return; }
+      toast('Opening Desmos…'); whenDesmosReady(() => putInDesmos(lines, opts)); return;
+    }
     if (opts.degreeMode !== undefined) {
       desmosCalc.updateSettings({ degreeMode: opts.degreeMode });
       toast(opts.degreeMode ? 'Desmos switched to Degrees' : 'Desmos switched to Radians');
@@ -1755,6 +2683,7 @@
     el._localZoom = () => {
       const z = isPhone() ? Math.max(1, Math.min(2.2, 0.9 / cam.z)) : 1;
       box.style.zoom = z; el.querySelector('.cw-top').style.zoom = z; el.querySelector('.bw-head').style.zoom = z;
+      const sh = el.querySelector(':scope > .bw-shield'); if (sh) sh.style.top = el.querySelector('.bw-head').offsetHeight * z + 'px';
     };
     const view = el.querySelector('.cw-view'), search = el.querySelector('.cw-search'), posEl = el.querySelector('.cw-pos');
     let applyingScroll = false, sendTimer = null;
@@ -1922,16 +2851,49 @@
       };
       worldLayer.appendChild(el);
       const mount = el.querySelector('#desmosMount');
+      const offline = '<div style="padding:18px;font-size:12px;color:#6b7280;">Offline — paste Desmos photo with Ctrl+V.</div>';
       if (typeof window.Desmos !== 'undefined') {
-        desmosCalc = Desmos.GraphingCalculator(mount, {
-          degreeMode: settings.desmosAngles === 'deg',
-          clearIntoDegreeMode: settings.desmosAngles === 'deg',
-          projectorMode: zenOn && settings.zenProj
+        // Desmos runs in its own iframe. Board zoom is a CSS scale, and inside a scaled box Desmos misjudges its size
+        // and mouse positions (at a distance it switched to "narrow" mode with only its own keypad). An iframe always
+        // sees its real size; the browser maps the zoom for it.
+        const frame = document.createElement('iframe');
+        frame.className = 'desmos-frame'; frame.title = 'Desmos';
+        const src = (document.querySelector('script[src*="desmos.com/api"]') || {}).src || '';
+        frame.srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;overflow:hidden;background:#fff}#c{position:absolute;inset:0}</style><script src="${src}"><\/script></head><body><div id="c"></div></body></html>`;
+        mount.appendChild(frame);
+        frame.addEventListener('load', () => {
+          const w = frame.contentWindow;
+          if (!el.isConnected || !w) return;
+          if (!w.Desmos) { mount.innerHTML = offline; return; }
+          desmosCalc = w.Desmos.GraphingCalculator(w.document.getElementById('c'), {
+            degreeMode: settings.desmosAngles === 'deg',
+            clearIntoDegreeMode: settings.desmosAngles === 'deg',
+            projectorMode: zenOn && settings.zenProj
+          });
+          if (savedDesmosState) desmosCalc.setState(savedDesmosState, { allowUndo: false });
+          lastDesmosJson = JSON.stringify(shareableDesmos(desmosCalc.getState()));
+          rememberDesmosIds(desmosCalc.getState());
+          desmosCalc.observeEvent('change', onLocalDesmosChange);
+          try { desmosCalc.observe('selectedExpressionId', onDesmosSelectionChange); } catch {}
+          w.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Escape') setActiveWin(null);
+            if ((ev.ctrlKey || ev.metaKey) && ['Equal', 'NumpadAdd', 'Minus', 'NumpadSubtract', 'Digit0', 'Numpad0'].includes(ev.code)) {
+              ev.preventDefault(); window.dispatchEvent(new KeyboardEvent('keydown', { code: ev.code, key: ev.key, ctrlKey: true }));
+            }
+          });
+          // pinch / Ctrl+scroll inside Desmos zooms the board too, not the page
+          w.addEventListener('wheel', (ev) => {
+            if (!(ev.ctrlKey || ev.metaKey)) return;
+            ev.preventDefault();
+            const r = frame.getBoundingClientRect(), k = r.width / (frame.offsetWidth || r.width);
+            ctrlWheelZoom(ev, r.left + ev.clientX * k, r.top + ev.clientY * k);
+          }, { passive: false });
+          w.document.addEventListener('gesturestart', (ev) => ev.preventDefault(), { passive: false });
+          w.document.addEventListener('gesturechange', (ev) => ev.preventDefault(), { passive: false });
+          w.addEventListener('pointerdown', () => { if (activeWin !== el) setActiveWin(el); }); // using it = it's the open window
+          flushDesmosReady();
         });
-        if (savedDesmosState) desmosCalc.setState(savedDesmosState, { allowUndo: false });
-        lastDesmosJson = JSON.stringify(shareableDesmos(desmosCalc.getState()));
-        desmosCalc.observeEvent('change', onLocalDesmosChange);
-      } else mount.innerHTML = '<div style="padding:18px;font-size:12px;color:#6b7280;">Offline — paste Desmos photo with Ctrl+V.</div>';
+      } else mount.innerHTML = offline;
       el.querySelector('#bwSaveDesmos').onclick = () => { if (!desmosCalc) return; savedDesmosState = desmosCalc.getState(); saveWorkspace(); toast('Desmos saved'); };
       el.querySelector('#bwSnapDesmos').onclick = snapshotDesmosComposite;
       makeWidgetInteractive(el, wd, () => { if (desmosCalc) desmosCalc.resize(); });
@@ -2111,9 +3073,9 @@
   document.getElementById('snapDesmosBtn').onclick = snapshotDesmosComposite;
 
   function pinImageToBoard(src) {
-    pushUndo();
     const im = new Image();
     im.onload = () => {
+      pushUndo();
       const ratio = im.height / im.width || 0.55; const w = Math.min(460, im.width || 420);
       const pos = screenToWorld(window.innerWidth * 0.54, window.innerHeight * 0.28);
       const id = 'o_' + Date.now();
@@ -2187,6 +3149,10 @@
     if (document.activeElement === textBox || document.activeElement.tagName === 'INPUT') return;
     const items = e.clipboardData && e.clipboardData.items; if (!items) return;
     for (const it of items) { if (it.type.startsWith('image/')) { e.preventDefault(); const f = it.getAsFile(); if (f) handlePastedFile(f); return; } }
+    if (boardClip) {
+      const txt = e.clipboardData.getData('text/plain');
+      if (txt === clipToken || (clipNoSys && !txt)) { e.preventDefault(); pasteClip(); }
+    }
   });
 
   const peekWin = document.getElementById('peekWindow'), peekImg = document.getElementById('peekImg'), peekView = document.getElementById('peekViewport');
@@ -2423,15 +3389,21 @@
       if (e.code === 'Escape' || (e.code === 'Enter' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); commitText(); }
       return;
     }
-    if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT') return;
+    if (e.key === 'Escape' && activeWin) { setActiveWin(null); return; }
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable ||
+        (ae.closest && ae.closest('.board-widget, .dcg-container, .side-drawer, .modal')))) return; // typing in Desmos etc.
 
     if (e.code === 'Space' && !spaceHeld) { spaceHeld = true; boardCanvas.classList.remove('pass-through'); boardCanvas.style.cursor = 'grab'; return; }
     if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
     if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') { e.preventDefault(); redo(); return; }
-    if (e.code === 'Delete' || e.code === 'Backspace') {
-      if (selectedId) { pushUndo(); objects = objects.filter(o => o.id !== selectedId); selectedId = null; renderBoard(); saveWorkspace(); broadcastBoard(); }
-      return;
-    }
+    if (e.code === 'Delete' || e.code === 'Backspace') { deleteSel(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyA') { e.preventDefault(); setTool('select'); clearSel(); multiSel = objects.filter(o => o.type !== 'pin').map(o => o.id); renderBoard(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyD') { e.preventDefault(); duplicateSel(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC' && !e.shiftKey) { if (selObjs().length && !(window.getSelection && String(window.getSelection()))) copySel(); return; }
+    if (e.key === '?') { e.preventDefault(); openKeysHelp(); return; }
+    if (e.key === 'Escape' && document.getElementById('keysHelp').classList.contains('show')) { document.getElementById('keysHelp').classList.remove('show'); return; }
+    if (e.key === 'Escape' && (selectedId || multiSel.length)) { clearSel(); renderBoard(); return; }
     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
       const kb = settings.keybinds;
       if (e.code === kb.cursor) setTool('cursor');
