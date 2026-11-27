@@ -44,7 +44,12 @@
     snapDelay: 400,
     laserFade: 1300,
     textSize: 19,
-    colors: ['#111111', '#dc2626', '#2563eb', '#16a34a', '#eab308'],
+    colors: ['#2A1D16', '#D93A3A', '#1C9AA0', '#5A8F2E'],
+    myColor: null,
+    holdReact: true,
+    allowBring: true,
+    timerSound: true,
+    quick: ['🤯', '🔥', '👏', '😂', '🤔', '😭', '💀', '❤️'],
     desmosAngles: 'deg',
     zenProj: true,
     pasteTarget: 'desmos',
@@ -61,7 +66,9 @@
       zen: 'KeyZ',
       formulas: 'KeyF',
       desmos: 'KeyG',
-      photos: 'KeyD'
+      photos: 'KeyD',
+      timer: 'KeyK',
+      gather: 'KeyB'
     }
   };
 
@@ -547,6 +554,7 @@
 
     const myName = document.getElementById('roomNameInput').value || 'Friend';
     roomChannel = sb.channel(`room:${code}`, { config: { presence: { key: peerId } } });
+    wireTiramisuRoom(roomChannel);
 
     roomChannel
       .on('presence', { event: 'sync' }, () => {
@@ -555,6 +563,7 @@
         document.getElementById('roomPeersList').textContent = `Online (${names.length}): ${names.join(', ')}`;
         document.getElementById('roomBadgeText').textContent = `${code} (${names.length})`;
         setRoomStatus(`🟢 Live in ${code} · ${names.length} online (${names.join(', ')})`, '#dcfce7', '#166534');
+        onPresenceSync(st);
       })
       .on('presence', { event: 'join' }, ({ key }) => {
         if (key === peerId) return;
@@ -645,6 +654,7 @@
       .on('broadcast', { event: 'cursor' }, ({ payload }) => {
         if (payload.sender === peerId) return;
         peers[payload.sender] = payload;
+        seePerson({ cid: payload.sender, pid: payload.pid, name: payload.name, color: payload.color });
         if (payload.tool === 'laser') {
           if (!peerLasers[payload.sender]) peerLasers[payload.sender] = { points: [] };
           if (payload.laserActive) {
@@ -659,7 +669,8 @@
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          await roomChannel.track({ id: peerId, name: myName });
+          await roomChannel.track({ id: peerId, cid: clientId, name: myName, color: settings.myColor });
+          onRoomJoined();
           await roomChannel.send({ type: 'broadcast', event: 'request_sync', payload: { sender: peerId } });
           toast(`Connected live to room ${code}`);
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
@@ -673,6 +684,7 @@
     clearBoardMemory();
     if (roomChannel && sb) await sb.removeChannel(roomChannel);
     roomChannel = null; roomCode = null; isHost = false; peers = {};
+    onRoomLeft();
     Object.keys(peerLasers).forEach(k => delete peerLasers[k]);
     document.getElementById('cursorsLayer').innerHTML = '';
     document.getElementById('roomLiveControls').style.display = 'none';
@@ -746,22 +758,7 @@
     }
   }
 
-  function renderPeerCursors() {
-    const layer = document.getElementById('cursorsLayer');
-    layer.innerHTML = '';
-    const now = Date.now();
-    Object.values(peers).forEach(p => {
-      if (now - p.t > 5000) return;
-      const sx = p.wx * cam.z + cam.x;
-      const sy = p.wy * cam.z + cam.y;
-      const d = document.createElement('div');
-      d.className = 'peer-cursor';
-      d.style.left = sx + 'px'; d.style.top = sy + 'px';
-      const icon = p.tool === 'laser' ? '🔴' : '➤';
-      d.innerHTML = `<span style="font-size:13px;">${icon}</span><span class="peer-tag">${p.name}</span>`;
-      layer.appendChild(d);
-    });
-  }
+  function renderPeerCursors() { renderPeerCursorsNew(); }
 
   /* ==================== QUESTION LOADING & SWITCHING ==================== */
   function currentQ() { return QUESTIONS[currentIndex] || { id: 'empty', topic: 'Empty', num: '', difficulty: '', prompt: 'No questions loaded.', diagramHtml: '', type: 'mcq', choices: {}, answer: '', formulas: [] }; }
@@ -779,7 +776,8 @@
     customDiagramImg = null;
     soloRevealed = false;
 
-    document.getElementById('qMetaLabel').textContent = `${q.topic} · ${q.num} (${q.difficulty})`;
+    document.getElementById('qMetaLabel').innerHTML = `<span class="topic">${escHtml(q.topic)}</span>${escHtml(q.num)}`;
+    document.getElementById('qNavTopic').textContent = q.topic;
     missedThisVisit = false;
     updateNavText();
     document.getElementById('qPrompt').innerHTML = q.prompt;
@@ -855,7 +853,7 @@
     const field = document.getElementById('gridInField');
     field.classList.remove('correct', 'wrong');
     if (!st) return;
-    const who = st.byPeer !== peerId && st.by ? `<span class="pick-by">${escHtml(st.by)}</span>` : '';
+    const who = st.byPeer !== peerId && st.by ? `<span class="pick-by" title="${escHtml(st.by)}" style="background:${escHtml(st.color || '#6E5A4C')}">${escHtml(initial(st.by))}</span>` : '';
     if (q.type === 'mcq') {
       picked = st.pick || null;
       const chip = st.pick && document.querySelector(`#qChoices .choice-chip[data-choice="${st.pick}"]`);
@@ -866,7 +864,7 @@
     }
   }
   function setAnswer(patch) {
-    answerState = { qid: currentQ().id, byPeer: peerId, by: document.getElementById('roomNameInput').value || 'Friend', ...patch };
+    answerState = { qid: currentQ().id, byPeer: peerId, by: document.getElementById('roomNameInput').value || 'Friend', color: settings.myColor, ...patch };
     paintAnswer();
     if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'answer_state', payload: { sender: peerId, state: answerState } });
   }
@@ -937,6 +935,7 @@
     renderBoard();
     renderPeerCursors();
     if (window.__satTextLayout) window.__satTextLayout();
+    if (window.__tiramisu) onCameraMoved();
     const cw = document.getElementById('cardsBoardWidget'); if (cw && cw._localZoom) cw._localZoom();
   }
   window.__w2s = (x, y) => [cam.x + x * cam.z, cam.y + y * cam.z];
@@ -966,13 +965,7 @@
       const w = screenToWorld(e.clientX, e.clientY);
       roomChannel.send({
         type: 'broadcast', event: 'cursor',
-        payload: {
-          sender: clientId,
-          name: document.getElementById('roomNameInput').value || 'Friend',
-          wx: w.x, wy: w.y,
-          tool, laserActive,
-          t: Date.now()
-        }
+        payload: curPayload({ wx: w.x, wy: w.y, tool, laserActive })
       });
     }
   }, true);
@@ -1199,10 +1192,12 @@
     if (typeof refreshShields === 'function') refreshShields();
     boardCanvas.style.cursor = spaceHeld ? 'grab' : nextTool === 'select' ? 'default' : nextTool === 'text' ? 'text' : nextTool === 'eraser' ? 'cell' : 'crosshair';
     if (nextTool !== 'select') { clearSel(); renderBoard(); }
+    updateTray();
   }
   document.querySelectorAll('.toolbar-top .tbtn[data-tool]').forEach(b => { b.onclick = () => setTool(b.dataset.tool); });
 
-  function renderColorPalette() {
+  function renderColorPalette() { renderColorPaletteNew(); }
+  function renderColorPaletteOld() {
     const mount = document.getElementById('colorPaletteMount');
     mount.innerHTML = settings.colors.map(c => `<span class="cdot ${inkColor === c ? 'active' : ''}" data-color="${c}" style="background:${c};"></span>`).join('');
     mount.querySelectorAll('.cdot').forEach(dot => {
@@ -1235,7 +1230,7 @@
       shapesMenu.classList.remove('show'); pushUndo();
       const id = 'o_' + Date.now();
       const c = screenToWorld(window.innerWidth * 0.65, window.innerHeight * 0.5);
-      objects.push({ id, type: 'stamp', kind: b.dataset.stamp, x: c.x - 85, y: c.y - 70, w: 170, h: 140, color: inkColor });
+      objects.push({ id, own: clientId, type: 'stamp', kind: b.dataset.stamp, x: c.x - 85, y: c.y - 70, w: 170, h: 140, color: inkColor });
       selectedId = id; setTool('select'); renderBoard(); saveWorkspace(); broadcastBoard();
     };
   });
@@ -1253,10 +1248,11 @@
     return { x: Math.min(o.x, o.x + o.w), y: Math.min(o.y, o.y + o.h), w: Math.abs(o.w), h: Math.abs(o.h) };
   }
 
-  function hitTest(pt) {
+  function hitTest(pt, ok) {
     const tol = 11 / cam.z;
     for (let i = objects.length - 1; i >= 0; i--) {
       const o = objects[i];
+      if (ok && !ok(o)) continue;
       if (o.type === 'stroke') { if (o.points.some(p => Math.hypot(p.x - pt.x, p.y - pt.y) < tol)) return o; }
       else if (o.type === 'grid') {
         // a grid is only grabbed by its edge, so you can still draw and lasso on top of it
@@ -1283,13 +1279,13 @@
       minX = Math.min(minX, pts[i].x); minY = Math.min(minY, pts[i].y); maxX = Math.max(maxX, pts[i].x); maxY = Math.max(maxY, pts[i].y);
     }
     const direct = Math.hypot(l.x - f.x, l.y - f.y);
-    if (direct > 25 && len / direct < 1.12) { const a = snapToGrid(f) || f, z = snapToGrid(l) || l; return { id: stroke.id, type: 'line', onDiagram: stroke.onDiagram, x: a.x, y: a.y, w: z.x - a.x, h: z.y - a.y, color: stroke.color, width: stroke.width, dashed: false }; }
+    if (direct > 25 && len / direct < 1.12) { const a = snapToGrid(f) || f, z = snapToGrid(l) || l; return { id: stroke.id, own: stroke.own, type: 'line', onDiagram: stroke.onDiagram, x: a.x, y: a.y, w: z.x - a.x, h: z.y - a.y, color: stroke.color, width: stroke.width, dashed: false }; }
     const bw = maxX - minX, bh = maxY - minY;
     if (bw > 24 && bh > 24 && direct < Math.max(bw, bh) * 0.38) {
       const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, r = (bw + bh) / 4;
       let err = 0; for (const p of pts) err += Math.abs(Math.hypot(p.x - cx, p.y - cy) - r);
-      if (err / pts.length < r * 0.2 && Math.abs(bw - bh) < Math.max(bw, bh) * 0.32) return { id: stroke.id, type: 'circle', onDiagram: stroke.onDiagram, x: cx - r, y: cy - r, w: r * 2, h: r * 2, color: stroke.color, width: stroke.width };
-      return { id: stroke.id, type: 'isoTriangle', onDiagram: stroke.onDiagram, x: minX, y: minY, w: bw, h: bh, color: stroke.color, width: stroke.width };
+      if (err / pts.length < r * 0.2 && Math.abs(bw - bh) < Math.max(bw, bh) * 0.32) return { id: stroke.id, own: stroke.own, type: 'circle', onDiagram: stroke.onDiagram, x: cx - r, y: cy - r, w: r * 2, h: r * 2, color: stroke.color, width: stroke.width };
+      return { id: stroke.id, own: stroke.own, type: 'isoTriangle', onDiagram: stroke.onDiagram, x: minX, y: minY, w: bw, h: bh, color: stroke.color, width: stroke.width };
     }
     return null;
   }
@@ -1648,7 +1644,7 @@
     const qr = document.getElementById('questionCard').getBoundingClientRect();
     const half = n * u * cam.z, cx = Math.max(window.innerWidth * 0.66, qr.right + half + 40);
     const c = screenToWorld(cx, Math.max(qr.top + half, window.innerHeight * 0.5));
-    objects.push({ id: 'o_' + Date.now(), type: 'grid', u, x: c.x - n * u, y: c.y - n * u, w: 2 * n * u, h: 2 * n * u });
+    objects.push({ id: 'o_' + Date.now(), own: clientId, type: 'grid', u, x: c.x - n * u, y: c.y - n * u, w: 2 * n * u, h: 2 * n * u });
     if (!['pen', 'shape'].includes(tool)) setTool('pen');
     renderBoard(); saveWorkspace(); broadcastBoard();
     toast('Tap inside the grid to drop a point · lines snap to the grid · move it with Select (drag its edge)');
@@ -1735,7 +1731,7 @@
     if (!list || !list.length) return;
     pushUndo();
     const ids = [];
-    list.forEach(s => { const o = JSON.parse(JSON.stringify(s)); o.id = newId(); o.onDiagram = false; moveObjFrom(o, s, dx, dy); objects.push(o); ids.push(o.id); });
+    list.forEach(s => { const o = JSON.parse(JSON.stringify(s)); o.id = newId(); o.own = clientId; o.onDiagram = false; moveObjFrom(o, s, dx, dy); objects.push(o); ids.push(o.id); });
     clearSel(); if (ids.length === 1) selectedId = ids[0]; else multiSel = ids;
     if (tool !== 'select') setTool('select');
     renderBoard(); saveWorkspace(); broadcastBoard();
@@ -1780,7 +1776,7 @@
       const w = Math.min(520, w0 * 1.6), h = w * (h0 / w0);
       pushUndo();
       const id = newId();
-      objects.push({ id, type: 'image', src, x: pos.x, y: pos.y, w, h });
+      objects.push({ id, own: clientId, type: 'image', src, x: pos.x, y: pos.y, w, h });
       clearSel(); selectedId = id; setTool('select'); renderBoard(); saveWorkspace(); broadcastBoard();
       toast('Figure copied — draw on it, drag to move, corner to resize');
     };
@@ -1875,13 +1871,14 @@
     if (tool === 'laser') {
       laserActive = true;
       laserTrail.push({ x: pt.x, y: pt.y, t: Date.now() });
-      if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'cursor', payload: { sender: clientId, name: document.getElementById('roomNameInput').value || 'Friend', wx: pt.x, wy: pt.y, tool: 'laser', laserActive: true, t: Date.now() } });
+      if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'cursor', payload: curPayload({ wx: pt.x, wy: pt.y, tool: 'laser', laserActive: true }) });
       renderBoard(); return;
     }
     if (tool === 'eraser') {
-      const hit = hitTest(pt);
+      const hit = hitTest(pt, isMine);
       pushUndo();
       if (hit) { objects = objects.filter(o => o.id !== hit.id); renderBoard(); saveWorkspace(); broadcastBoard(); }
+      else eraseHint(pt);
       pState = { mode: 'erase' }; return;
     }
     if (tool === 'select') {
@@ -1912,14 +1909,14 @@
       pushUndo();
       const SNAPS = ['line', 'dashed', 'arrow', 'rightTriangle', 'isoTriangle', 'angleArc'];
       const sp = (SNAPS.includes(shapeType) && snapToGrid(pt)) || pt;
-      const obj = { id: newId(), type: shapeType === 'dashed' ? 'line' : shapeType === 'tick2' ? 'tick' : shapeType, dashed: shapeType === 'dashed', onDiagram: isInsideDiagram(pt), x: sp.x, y: sp.y, w: 1, h: 1, color: inkColor, width: inkWidth };
+      const obj = { id: newId(), own: clientId, type: shapeType === 'dashed' ? 'line' : shapeType === 'tick2' ? 'tick' : shapeType, dashed: shapeType === 'dashed', onDiagram: isInsideDiagram(pt), x: sp.x, y: sp.y, w: 1, h: 1, color: inkColor, width: inkWidth };
       if (shapeType === 'tick2') obj.n = 2;
       if (shapeType === 'angleArc') { delete obj.w; delete obj.h; obj.r = 0; obj.a0 = null; }
       objects.push(obj); pState = { mode: 'shape', obj }; capturePtr(e); return;
     }
 
     pushUndo();
-    const s = { id: 'o_' + Date.now() + Math.random(), type: 'stroke', onDiagram: isInsideDiagram(pt), color: inkColor, width: tool === 'highlighter' ? inkWidth * 3.8 : inkWidth, alpha: tool === 'highlighter' ? 0.28 : 1, points: [pt] };
+    const s = { id: 'o_' + Date.now() + Math.random(), own: clientId, type: 'stroke', onDiagram: isInsideDiagram(pt), color: inkColor, width: tool === 'highlighter' ? inkWidth * 3.8 : inkWidth, alpha: tool === 'highlighter' ? 0.28 : 1, points: [pt] };
     objects.push(s); pState = { mode: 'stroke', obj: s, t: Date.now() }; capturePtr(e);
     if (snapOn && tool === 'pen') {
       const delay = Number(settings.snapDelay) || 400;
@@ -1946,7 +1943,7 @@
       return;
     }
     if (pState.mode === 'pan') { cam.x = e.clientX - pState.sx; cam.y = e.clientY - pState.sy; applyCamera(); }
-    else if (pState.mode === 'erase') { const hit = hitTest(pt); if (hit) { objects = objects.filter(o => o.id !== hit.id); renderBoard(); } }
+    else if (pState.mode === 'erase') { const hit = hitTest(pt, isMine); if (hit) { objects = objects.filter(o => o.id !== hit.id); renderBoard(); } else eraseHint(pt); }
     else if (pState.mode === 'stroke' && !pState.snapped) {
       pState.obj.points.push(pt); pState.t = Date.now(); clearTimeout(pState.timer);
       if (roomChannel && Date.now() - lastLiveStrokeSend > 65) {
@@ -2207,7 +2204,8 @@
     picker.style.top = (sy - h - 18 > 8 ? sy - h - 18 : sy + 22) + 'px';
   }
   const closePicker = () => picker.classList.remove('show');
-  picker.querySelectorAll('button').forEach(b => b.onclick = (e) => {
+  picker.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
     e.stopPropagation();
     if (!pickerAt) return closePicker();
     if (b.dataset.lost) addLostPin(pickerAt); else sendReaction(pickerAt, b.dataset.r);
@@ -2221,7 +2219,7 @@
   function clearHold() { clearTimeout(holdTimer); holdTimer = null; holdStart = null; }
   function armHold(e) {
     clearHold();
-    if (tool === 'select') return; // holding still is how you start moving things
+    if (tool === 'select' || settings.holdReact === false) return; // holding still is how you start moving things
     holdStart = { x: e.clientX, y: e.clientY };
     holdTimer = setTimeout(() => {
       const h = holdStart; clearHold();
@@ -2235,7 +2233,7 @@
   // "I'm lost here" pins: stay on the board until someone taps ✓ Explained
   function addLostPin(pt) {
     pushUndo();
-    objects.push({ id: 'o_' + Date.now(), type: 'pin', x: pt.x, y: pt.y, by: myName() });
+    objects.push({ id: 'o_' + Date.now(), own: clientId, type: 'pin', x: pt.x, y: pt.y, by: myName() });
     renderBoard(); saveWorkspace(); broadcastBoard();
     sendReaction(pt, '❓');
   }
@@ -2480,7 +2478,7 @@
     } else {
       if (!val.trim()) { renderBoard(); return; }
       pushUndo();
-      objects.push({ id: 'o_' + Date.now(), type: 'text', x: textTargetWorld.x, y: textTargetWorld.y, text: val, fontSize: textFont, color: textColor });
+      objects.push({ id: 'o_' + Date.now(), own: clientId, type: 'text', x: textTargetWorld.x, y: textTargetWorld.y, text: val, fontSize: textFont, color: textColor });
     }
     renderBoard(); saveWorkspace(); broadcastBoard();
   }
@@ -2925,21 +2923,26 @@
   Object.keys(subBtns).forEach(k => { subBtns[k].onclick = () => openDrawerTab(k); });
   document.getElementById('closeDrawerBtn').onclick = closeDrawer;
 
-  let filterTopic = 'ALL', filterDiff = 'all';
-  // The "collection" = whatever the question browser filters currently show.
-  function inCollection(q) {
+  let filterTopic = 'ALL', filterDiff = 'all', filterStatus = 'any';
+  // The "collection" = whatever the question picker filters currently show.
+  function statusOk(q) {
     const st = progress[q.id] || {};
-    if (filterTopic !== 'ALL' && q.topic !== filterTopic) return false;
-    if (filterDiff === 'starred') return !!st.starred;
-    if (filterDiff === 'wrong') return !!st.wrong;
-    if (filterDiff !== 'all' && q.difficulty !== filterDiff) return false;
+    if (filterStatus === 'starred') return !!st.starred;
+    if (filterStatus === 'wrong') return !!st.wrong;
+    if (filterStatus === 'new') return !st.solved && !st.wrong && !st.wrongCount;
     return true;
+  }
+  function inCollection(q) {
+    if (filterTopic !== 'ALL' && q.topic !== filterTopic) return false;
+    if (filterDiff !== 'all' && q.difficulty !== filterDiff) return false;
+    return statusOk(q);
   }
   function collectionIdx() { return QUESTIONS.map((q, i) => i).filter(i => inCollection(QUESTIONS[i])); }
   function updateNavText() {
     const col = collectionIdx();
     const pos = col.indexOf(currentIndex);
     document.getElementById('qNavText').textContent = `${pos === -1 ? '–' : pos + 1} / ${col.length}`;
+    if (document.getElementById('qPickerBackdrop').classList.contains('show')) renderPicker();
   }
   function stepCollection(dir) {
     const col = collectionIdx();
@@ -2958,7 +2961,7 @@
   document.getElementById('diffChips').querySelectorAll('.chip-btn').forEach(b => {
     b.onclick = () => {
       document.getElementById('diffChips').querySelectorAll('.chip-btn').forEach(x => x.classList.remove('active'));
-      b.classList.add('active'); filterDiff = b.dataset.diff; renderQuestionBrowser(); updateNavText();
+      b.classList.add('active'); if (b.dataset.diff === 'starred' || b.dataset.diff === 'wrong') { filterStatus = b.dataset.diff; filterDiff = 'all'; } else { filterDiff = b.dataset.diff; filterStatus = 'any'; } renderQuestionBrowser(); updateNavText();
     };
   });
   function renderQuestionBrowser() {
@@ -3079,7 +3082,7 @@
       const ratio = im.height / im.width || 0.55; const w = Math.min(460, im.width || 420);
       const pos = screenToWorld(window.innerWidth * 0.54, window.innerHeight * 0.28);
       const id = 'o_' + Date.now();
-      objects.push({ id, type: 'image', src, x: pos.x, y: pos.y, w, h: w * ratio });
+      objects.push({ id, own: clientId, type: 'image', src, x: pos.x, y: pos.y, w, h: w * ratio });
       selectedId = id; setTool('select'); renderBoard(); saveWorkspace(); broadcastBoard();
     };
     im.src = src;
@@ -3297,6 +3300,7 @@
   const settingsBackdrop = document.getElementById('settingsBackdrop');
   let listeningKeybind = null;
 
+  const KEY_LABELS = { cursor: 'Hand', select: 'Select', pen: 'Pen', highlighter: 'Highlighter', laser: 'Laser', eraser: 'Eraser', text: 'Text', zen: 'Zen mode', formulas: 'Formulas', desmos: 'Desmos', photos: 'Photos', timer: 'Timer', gather: 'Bring everyone' };
   function populateSettingsUI() {
     document.getElementById('setSmartPass').checked = !!settings.smartPass;
     document.getElementById('setPanButton').value = String(settings.panButton);
@@ -3324,12 +3328,13 @@
       inp.onchange = (e) => { settings.colors[Number(inp.dataset.cidx)] = e.target.value; inkColor = e.target.value; renderColorPalette(); saveSettings(); };
     });
 
+    populateTiramisuSettings();
     const km = document.getElementById('keybindsMount');
     km.innerHTML = Object.entries(settings.keybinds).map(([act, code]) => `
-      <div class="set-row" style="font-size:12px;"><span style="text-transform:capitalize;">${act}</span><button class="keybind-btn" data-act="${act}">${code.replace('Key', '').replace('Digit', '')}</button></div>
+      <div class="set-row"><span>${KEY_LABELS[act] || act}</span><button class="keybind-btn" data-act="${act}">${code.replace('Key', '').replace('Digit', '')}</button></div>
     `).join('');
     km.querySelectorAll('.keybind-btn').forEach(b => {
-      b.onclick = () => { km.querySelectorAll('.keybind-btn').forEach(x => x.classList.remove('listening')); b.classList.add('listening'); b.textContent = 'Press key...'; listeningKeybind = b.dataset.act; };
+      b.onclick = () => { km.querySelectorAll('.keybind-btn').forEach(x => x.classList.remove('listening')); b.classList.add('listening'); b.textContent = 'Press a key'; listeningKeybind = b.dataset.act; };
     });
   }
 
@@ -3357,7 +3362,7 @@
   document.getElementById('setDesmosAngles').onchange = (e) => { settings.desmosAngles = e.target.value; if (desmosCalc) desmosCalc.updateSettings({ degreeMode: e.target.value === 'deg' }); saveSettings(); };
   document.getElementById('setPasteTarget').onchange = (e) => { settings.pasteTarget = e.target.value; saveSettings(); };
   document.getElementById('testSbBtn').onclick = () => { settings.sbUrl = document.getElementById('setSbUrl').value; settings.sbKey = document.getElementById('setSbKey').value; saveSettings(); initSupabase(false); };
-  document.getElementById('resetSettingsBtn').onclick = () => { settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)); saveSettings(); populateSettingsUI(); renderColorPalette(); applyGrid(settings.defaultGrid); toast('Settings reset'); };
+  document.getElementById('resetSettingsBtn').onclick = () => { const mc = settings.myColor; settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)); settings.myColor = mc; inkColor = mc; saveSettings(); renderPickerQuick(); populateSettingsUI(); renderColorPalette(); applyGrid(settings.defaultGrid); toast('Settings reset'); };
 
   /* ==================== ROOM MODAL ==================== */
   const roomBackdrop = document.getElementById('roomBackdrop');
@@ -3417,6 +3422,8 @@
       else if (e.code === kb.formulas) openDrawerTab('formulas');
       else if (e.code === kb.desmos) document.getElementById('tabDesmosBtn').click();
       else if (e.code === kb.photos) openPeek(peekIdx);
+      else if (e.code === kb.timer) document.getElementById('timerBtn').click();
+      else if (e.code === kb.gather) document.getElementById('gatherBtn').click();
     }
   });
   window.addEventListener('keyup', (e) => { if (e.code === 'Space') { spaceHeld = false; setTool(tool, shapeType); } });
@@ -3444,6 +3451,12 @@
     rememberRoom(startRoom);
     if (startRoom !== 'LOCAL') document.getElementById('roomCodeInput').value = startRoom;
 
+    if (!settings.myColor) {
+      let h = 0; for (const ch of clientId) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+      settings.myColor = PEOPLE_COLORS[h % PEOPLE_COLORS.length]; saveSettings();
+    }
+    inkColor = settings.myColor;
+    renderPickerQuick();
     renderColorPalette();
     applyGrid(settings.defaultGrid);
     setPanHint();
@@ -3457,4 +3470,427 @@
       await joinRoom(startRoom, localStorage.getItem('sat_wb_host_' + startRoom) === clientId);
     }
   });
-  })();
+    /* ==================== TIRAMISU: people, ink ownership, picker, timer, follow, settings ==================== */
+  const $ = (id) => document.getElementById(id);
+  const PEOPLE_COLORS = ['#3D6BE0', '#F08A24', '#8E5BE8', '#E2559B', '#1C9AA0', '#7A4B32', '#5A8F2E'];
+  const initial = (n) => (String(n || '?').trim()[0] || '?').toUpperCase();
+  const people = {}; // cid -> { cid, pid, name, color, t, x, y, presence }
+  function myColor() { return settings.myColor || PEOPLE_COLORS[0]; }
+  function applyMyColorVars() {
+    document.documentElement.style.setProperty('--me', myColor());
+    document.documentElement.style.setProperty('--ink', inkColor);
+    const dot = $('penInkDot'); if (dot) dot.style.background = inkColor;
+  }
+  function takenColors() { const now = Date.now(); return Object.values(people).filter(p => p.cid !== clientId && (p.presence || now - p.t < 30000)).map(p => p.color); }
+  function hello() { if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'hello', payload: { cid: clientId, pid: peerId, name: myName(), color: myColor() } }); }
+  function seePerson(d) {
+    if (!d || !d.cid || d.cid === clientId) return;
+    const isNew = !people[d.cid];
+    const p = people[d.cid] || (people[d.cid] = { cid: d.cid });
+    if (isNew) setTimeout(hello, 50);
+    if (d.name) p.name = d.name; if (d.color) p.color = d.color; if (d.pid) p.pid = d.pid;
+    p.t = Date.now(); renderPeople();
+  }
+  function renderPeople() {
+    const m = $('peopleMount'); if (!m) return;
+    const now = Date.now();
+    const list = Object.values(people).filter(p => p.presence || now - p.t < 30000);
+    const me = `<button class="av" data-cid="${clientId}" style="background:${myColor()}" title="${escHtml(myName())} (you)">${escHtml(initial(myName()))}</button>`;
+    m.innerHTML = roomChannel ? list.map(p => `<button class="av" data-cid="${p.cid}" style="background:${p.color || '#999'}" title="${escHtml(p.name)}">${escHtml(initial(p.name))}</button>`).join('') + me : '';
+    m.querySelectorAll('.av').forEach(b => b.onclick = (e) => { e.stopPropagation(); openPersonMenu(b.dataset.cid, b); });
+  }
+  setInterval(() => { hello(); renderPeople(); }, 10000);
+
+  // ---- menus ----
+  function placeMenu(menu, anchor, alignRight) {
+    const r = anchor.getBoundingClientRect();
+    menu.classList.add('show');
+    const w = menu.offsetWidth;
+    menu.style.top = (r.bottom + 10) + 'px';
+    menu.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, alignRight ? r.right - w : r.left)) + 'px';
+    menu.style.right = 'auto';
+  }
+  const moreMenu = $('moreMenu');
+  $('moreBtn').onclick = (e) => { e.stopPropagation(); const open = !moreMenu.classList.contains('show'); closeMenus(); if (open) { moreMenu.classList.add('show'); $('moreBtn').classList.add('active'); } };
+  moreMenu.addEventListener('click', (e) => { if (e.target.closest('.mi')) setTimeout(closeMenus, 0); });
+  function closeMenus() {
+    ['moreMenu', 'personMenu', 'toolsSheet', 'timerPop'].forEach(id => $(id).classList.remove('show'));
+    $('moreBtn').classList.remove('active'); $('phoneMoreTools').classList.remove('active');
+  }
+  window.addEventListener('pointerdown', (e) => {
+    if (e.target.closest && e.target.closest('.menu, #moreBtn, #phoneMoreTools, #timerBtn, .av, #shapesBtn, #shapesMenu')) return;
+    closeMenus();
+  }, true);
+
+  function openPersonMenu(cid, anchor) {
+    const pm = $('personMenu');
+    if (cid === clientId) {
+      pm.innerHTML = `<div class="mi" style="cursor:default"><span class="av sm" style="background:${myColor()}">${escHtml(initial(myName()))}</span><b>${escHtml(myName())}</b><span class="mut">you</span></div><span class="menu-sep"></span>
+        <button class="mi" data-act="color">Change my colour or name</button>`;
+    } else {
+      const p = people[cid] || {};
+      const fol = following && following.cid === cid;
+      pm.innerHTML = `<div class="mi" style="cursor:default"><span class="av sm" style="background:${p.color}">${escHtml(initial(p.name))}</span><b>${escHtml(p.name)}</b></div><span class="menu-sep"></span>
+        <button class="mi" data-act="follow">${fol ? 'Stop following' : 'Follow ' + escHtml(p.name)}</button>
+        <button class="mi" data-act="goto">Go to them once</button>`;
+    }
+    pm.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
+      closeMenus();
+      if (b.dataset.act === 'color') openSettings('inks');
+      else if (b.dataset.act === 'follow') { if (following && following.cid === cid) stopFollow(); else startFollow(cid); }
+      else if (b.dataset.act === 'goto') goToPerson(cid);
+    });
+    placeMenu(pm, anchor, true);
+  }
+
+  // ---- peer cursors (their colour, laser = red dot) ----
+  function renderPeerCursorsNew() {
+    const layer = $('cursorsLayer');
+    layer.innerHTML = '';
+    const now = Date.now();
+    Object.values(peers).forEach(p => {
+      if (now - p.t > 5000) return;
+      const sx = p.wx * cam.z + cam.x, sy = p.wy * cam.z + cam.y;
+      const c = p.color || '#2A1D16';
+      const d = document.createElement('div');
+      d.className = 'peer-cursor';
+      d.style.left = sx + 'px'; d.style.top = sy + 'px';
+      const icon = p.tool === 'laser'
+        ? '<svg width="22" height="22" viewBox="0 0 24 24" style="margin:-11px 0 0 -11px"><circle cx="12" cy="12" r="9" fill="#E5484D" opacity=".25"/><circle cx="12" cy="12" r="5" fill="#E5484D" stroke="#fff" stroke-width="2"/></svg>'
+        : `<svg width="20" height="22" viewBox="0 0 20 22"><path d="M2 2l15 8.2-6.6 1.6L7 18.5z" fill="${c}" stroke="#2A1D16" stroke-width="2" stroke-linejoin="round"/></svg>`;
+      d.innerHTML = `${icon}<span class="peer-tag" style="background:${c}">${escHtml(p.name)}</span>`;
+      layer.appendChild(d);
+    });
+  }
+  function curPayload(extra) { return { sender: clientId, pid: peerId, name: myName(), color: myColor(), t: Date.now(), ...extra }; }
+
+  // ---- ink belongs to the person who drew it ----
+  const isMine = (o) => !o.own || o.own === clientId;
+  let eraseHintAt = 0;
+  function eraseHint(pt) {
+    if (Date.now() - eraseHintAt < 2500) return;
+    const other = hitTest(pt, (o) => !isMine(o));
+    if (!other) return;
+    eraseHintAt = Date.now();
+    const who = Object.values(people).find(p => p.cid === other.own);
+    toast(`That's ${who ? who.name + "'s" : "someone else's"} ink. Your eraser only takes yours.`);
+  }
+  function renderColorPaletteNew() {
+    const mount = $('colorPaletteMount');
+    const list = [myColor(), ...settings.colors.filter(c => c.toLowerCase() !== myColor().toLowerCase())];
+    if (!list.some(c => c.toLowerCase() === String(inkColor).toLowerCase())) inkColor = myColor();
+    mount.innerHTML = list.map((c, i) => `<span class="cdot ${String(inkColor).toLowerCase() === c.toLowerCase() ? 'active' : ''}" data-color="${c}" title="${i ? 'Extra ink' : 'Your colour'}" style="background:${c};"></span>`).join('');
+    mount.querySelectorAll('.cdot').forEach(dot => { dot.onclick = () => { inkColor = dot.dataset.color; renderColorPaletteNew(); }; });
+    applyMyColorVars();
+  }
+  $('clearMineBtn').onclick = () => {
+    const mine = objects.filter(o => o.own === clientId);
+    if (!mine.length) { toast('You have no ink on this question'); return; }
+    pushUndo(); objects = objects.filter(o => o.own !== clientId); selectedId = null; renderBoard(); saveWorkspace(); broadcastBoard();
+  };
+  function confirmBox(title, text, okLabel, fn) {
+    $('confirmTitle').textContent = title; $('confirmText').textContent = text; $('confirmOk').textContent = okLabel;
+    const bd = $('confirmBackdrop'); bd.classList.add('show');
+    const close = () => bd.classList.remove('show');
+    $('confirmCancel').onclick = close; bd.onclick = (e) => { if (e.target === bd) close(); };
+    $('confirmOk').onclick = () => { close(); fn(); };
+    setTimeout(() => $('confirmCancel').focus(), 0);
+  }
+  $('clearAllBtn').onclick = () => {
+    if (!objects.length) { toast('The board is already empty'); return; }
+    confirmBox('Clear the whole board?', "Everyone's ink, text and shapes on this question. You can undo it.", 'Clear all', () => {
+      pushUndo(); objects = []; selectedId = null; renderBoard(); saveWorkspace(); broadcastBoard();
+    });
+  };
+
+  // ---- pen tray: shows for drawing tools (desktop), on tapping the active pen (phone) ----
+  let trayOpen = false;
+  function updateTray() {
+    const drawing = ['pen', 'highlighter', 'shape', 'text'].includes(tool);
+    document.getElementById('inkStyleBar').classList.toggle('show', isPhone() ? (trayOpen && drawing) : drawing);
+  }
+  document.querySelectorAll('#mainToolbar .tbtn[data-tool]').forEach(b => {
+    b.addEventListener('pointerdown', () => { b._wasActive = b.classList.contains('active'); });
+    b.addEventListener('click', () => { if (isPhone()) trayOpen = b._wasActive ? !trayOpen : false; updateTray(); });
+  });
+  boardStage.addEventListener('pointerdown', () => { if (trayOpen) { trayOpen = false; updateTray(); } });
+
+  // ---- phone: hide question, tools sheet ----
+  $('qCollapseBtn').onclick = (e) => {
+    e.stopPropagation();
+    const c = $('questionCard').classList.toggle('collapsed');
+    $('qCollapseBtn').textContent = c ? '▾' : '▴'; $('qCollapseBtn').title = c ? 'Show question' : 'Hide question';
+  };
+  $('phoneMoreTools').onclick = (e) => {
+    e.stopPropagation();
+    const s = $('toolsSheet'), open = !s.classList.contains('show'); closeMenus();
+    if (open) { s.classList.add('show'); $('phoneMoreTools').classList.add('active'); }
+  };
+  document.querySelectorAll('[data-sheet-tool]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation(); const t = b.dataset.sheetTool; closeMenus();
+    if (t === 'shapes') shapesMenu.classList.add('show');
+    else if (t === 'react') openPicker(window.innerWidth / 2, window.innerHeight / 2);
+    else setTool(t);
+  });
+
+  // ---- question picker ----
+  const pickerBd = $('qPickerBackdrop');
+  const TOPICS = [...new Set(QUESTIONS.map(q => q.topic))];
+  const numOf = (q) => (String(q.num).match(/\d+/) || [''])[0];
+  function segButtons(mount, opts, cur, onPick) {
+    mount.innerHTML = opts.map(([v, l]) => `<button data-v="${v}" class="${v === cur ? 'on' : ''}">${l}</button>`).join('');
+    mount.querySelectorAll('button').forEach(b => b.onclick = () => onPick(b.dataset.v));
+  }
+  function renderPicker() {
+    const tm = $('qpTopics');
+    const base = (q) => (filterDiff === 'all' || q.difficulty === filterDiff) && statusOk(q);
+    tm.innerHTML = [['ALL', 'All topics', QUESTIONS.filter(base).length], ...TOPICS.map(t => [t, t, QUESTIONS.filter(q => q.topic === t && base(q)).length])]
+      .map(([v, l, n]) => `<button data-v="${escHtml(v)}" class="${v === filterTopic ? 'on' : ''}">${escHtml(l)} <small>${n}</small></button>`).join('');
+    tm.querySelectorAll('button').forEach(b => b.onclick = () => { filterTopic = b.dataset.v; afterFilter(); });
+    segButtons($('qpDiff'), [['all', 'Any level'], ['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']], filterDiff, (v) => { filterDiff = v; afterFilter(); });
+    const wrongN = QUESTIONS.filter(q => progress[q.id] && progress[q.id].wrong).length;
+    segButtons($('qpStatus'), [['any', 'Any'], ['new', 'Not tried'], ['wrong', `Wrong (${wrongN})`], ['starred', 'Starred']], filterStatus, (v) => { filterStatus = v; afterFilter(); });
+    const col = collectionIdx();
+    $('qpJump').placeholder = `Jump to #  ·  1–${col.length}`;
+    const groups = [];
+    col.forEach(i => { const q = QUESTIONS[i], key = q.topic + ' · ' + q.difficulty; let g = groups[groups.length - 1]; if (!g || g.key !== key) groups.push(g = { key, q, items: [] }); g.items.push(i); });
+    $('qpList').innerHTML = groups.map(g => `<div class="qp-sec"><h4>${escHtml(g.q.topic)} <span class="mut">· ${g.q.difficulty[0].toUpperCase() + g.q.difficulty.slice(1)}</span></h4><div class="qp-grid">${g.items.map(i => {
+      const q = QUESTIONS[i], st = progress[q.id] || {};
+      const cls = i === currentIndex ? 'cur' : st.wrong ? 'bad' : st.solved ? 'ok' : '';
+      return `<button class="qtile ${cls}" data-i="${i}" title="${escHtml(q.topic + ' · ' + q.num)}">${numOf(q)}${st.starred ? '<span class="st">★</span>' : ''}</button>`;
+    }).join('')}</div></div>`).join('') || '<div class="mut" style="padding:20px 4px">Nothing matches these filters.</div>';
+    $('qpList').querySelectorAll('.qtile').forEach(b => b.onclick = () => { closeQPicker(); switchQuestion(Number(b.dataset.i)); });
+  }
+  function afterFilter() { renderPicker(); renderQuestionBrowser(); updateNavText(); }
+  function openQPicker() { closeMenus(); renderPicker(); pickerBd.classList.add('show'); const cur = $('qpList').querySelector('.qtile.cur'); if (cur) cur.scrollIntoView({ block: 'center' }); if (!isPhone() && !('ontouchstart' in window)) $('qpJump').focus(); }
+  function closeQPicker() { pickerBd.classList.remove('show'); $('qpJump').value = ''; }
+  $('openQuestionsBtn').onclick = () => pickerBd.classList.contains('show') ? closeQPicker() : openQPicker();
+  $('qpClose').onclick = closeQPicker;
+  pickerBd.onclick = (e) => { if (e.target === pickerBd) closeQPicker(); };
+  $('qpJump').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closeQPicker(); return; }
+    if (e.key !== 'Enter') return;
+    const col = collectionIdx(), n = parseInt($('qpJump').value, 10);
+    if (!(n >= 1 && n <= col.length)) { toast(`Pick a number from 1 to ${col.length}`); return; }
+    closeQPicker(); switchQuestion(col[n - 1]);
+  });
+  $('qpRandom').onclick = () => { const col = collectionIdx().filter(i => i !== currentIndex); if (!col.length) return; closeQPicker(); switchQuestion(col[Math.floor(Math.random() * col.length)]); };
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && pickerBd.classList.contains('show')) closeQPicker(); });
+
+  // ---- shared timer ----
+  let timer = { state: 'idle', left: 0, endAt: 0, dur: 0 }; // state: idle | run | pause | up
+  let tpMinutes = 10, timerTick = null;
+  const fmt = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+  function timerLeft() { return timer.state === 'run' ? timer.endAt - Date.now() : timer.left; }
+  function paintTimer() {
+    const bar = $('timerBar'), txt = $('timerText'), tg = $('timerToggle');
+    bar.classList.toggle('up', timer.state === 'up'); bar.classList.toggle('paused', timer.state === 'pause');
+    if (timer.state === 'idle') txt.textContent = 'Timer';
+    else if (timer.state === 'up') txt.textContent = "Time's up";
+    else txt.textContent = fmt(timerLeft());
+    tg.style.display = (timer.state === 'run' || timer.state === 'pause') ? '' : 'none';
+    tg.innerHTML = timer.state === 'pause' ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10.5-6.5z"/></svg>' : '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="5.5" width="4" height="13" rx="1.2"/><rect x="13.5" y="5.5" width="4" height="13" rx="1.2"/></svg>';
+    tg.title = timer.state === 'pause' ? 'Resume for everyone' : 'Pause for everyone';
+    $('tpStart').textContent = timer.state === 'idle' ? 'Start for everyone' : 'Restart with this time';
+    $('tpReset').style.display = timer.state === 'idle' ? 'none' : '';
+    $('tpMin').textContent = `${tpMinutes} min`;
+  }
+  function beep() {
+    if (settings.timerSound === false) return;
+    try {
+      const ac = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.28, 0.56].forEach(t0 => { const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
+        g.gain.setValueAtTime(0.0001, ac.currentTime + t0); g.gain.exponentialRampToValueAtTime(0.25, ac.currentTime + t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + t0 + 0.22);
+        o.start(ac.currentTime + t0); o.stop(ac.currentTime + t0 + 0.25); });
+    } catch {}
+  }
+  function runTimerLoop() {
+    clearInterval(timerTick);
+    if (timer.state === 'run') timerTick = setInterval(() => {
+      if (timer.state === 'run' && timer.endAt - Date.now() <= 0) { timer = { ...timer, state: 'up', left: 0 }; clearInterval(timerTick); beep(); }
+      paintTimer();
+    }, 250);
+    paintTimer();
+  }
+  function setTimer(next, send = true) {
+    timer = next; runTimerLoop();
+    if (send && roomChannel) roomChannel.send({ type: 'broadcast', event: 'timer', payload: { sender: peerId, name: myName(), ...timerWire() } });
+  }
+  const timerWire = () => ({ state: timer.state, left: Math.max(0, timerLeft()), dur: timer.dur });
+  function recvTimer(p) {
+    const left = Number(p.left) || 0;
+    timer = { state: p.state, left, dur: p.dur, endAt: Date.now() + left };
+    runTimerLoop();
+  }
+  $('timerBtn').onclick = (e) => {
+    e.stopPropagation();
+    const pop = $('timerPop'); const open = !pop.classList.contains('show'); closeMenus();
+    if (timer.state === 'up') { setTimer({ state: 'idle', left: 0, dur: 0, endAt: 0 }); return; }
+    if (open) { paintTimer(); placeMenu(pop, $('timerBar'), false); const r = $('timerBar').getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, r.left + r.width / 2 - pop.offsetWidth / 2)) + 'px'; if (r.top > window.innerHeight / 2) pop.style.top = (r.top - pop.offsetHeight - 10) + 'px'; }
+  };
+  $('timerToggle').onclick = (e) => {
+    e.stopPropagation();
+    if (timer.state === 'run') setTimer({ ...timer, state: 'pause', left: timerLeft() });
+    else if (timer.state === 'pause') setTimer({ ...timer, state: 'run', endAt: Date.now() + timer.left });
+  };
+  $('timerPop').querySelectorAll('[data-min]').forEach(b => b.onclick = () => { tpMinutes = Number(b.dataset.min); paintTimer(); });
+  $('tpLess').onclick = () => { tpMinutes = Math.max(1, tpMinutes - 1); paintTimer(); };
+  $('tpMore').onclick = () => { tpMinutes = Math.min(180, tpMinutes + 1); paintTimer(); };
+  $('tpStart').onclick = () => { const ms = tpMinutes * 60000; setTimer({ state: 'run', left: ms, dur: ms, endAt: Date.now() + ms }); closeMenus(); };
+  $('tpReset').onclick = () => { setTimer({ state: 'idle', left: 0, dur: 0, endAt: 0 }); closeMenus(); };
+
+  // ---- follow / go to / bring everyone ----
+  let following = null;          // { cid, name, color }
+  const followers = new Set();   // cids following me
+  let lastCamSend = 0, camSendTimer = null, applyingRemoteCam = false;
+  function viewWire() { return { cx: (window.innerWidth / 2 - cam.x) / cam.z, cy: (window.innerHeight / 2 - cam.y) / cam.z, z: cam.z, W: window.innerWidth, H: window.innerHeight }; }
+  function applyView(v) {
+    const fit = Math.min(window.innerWidth / (v.W || window.innerWidth), window.innerHeight / (v.H || window.innerHeight));
+    const z = Math.max(0.2, Math.min(4, v.z * Math.min(1, fit)));
+    applyingRemoteCam = true;
+    cam = { x: window.innerWidth / 2 - v.cx * z, y: window.innerHeight / 2 - v.cy * z, z };
+    applyCamera();
+    applyingRemoteCam = false;
+  }
+  function sendCam() {
+    if (!roomChannel || !followers.size) return;
+    const now = Date.now();
+    clearTimeout(camSendTimer);
+    if (now - lastCamSend < 120) { camSendTimer = setTimeout(sendCam, 130); return; }
+    lastCamSend = now;
+    roomChannel.send({ type: 'broadcast', event: 'cam', payload: { cid: clientId, ...viewWire() } });
+  }
+  function onCameraMoved() {
+    if (following && !applyingRemoteCam) stopFollow();
+    sendCam();
+  }
+  function startFollow(cid) {
+    const p = people[cid]; if (!p || !roomChannel) return;
+    following = { cid, name: p.name, color: p.color };
+    roomChannel.send({ type: 'broadcast', event: 'follow', payload: { from: clientId, to: cid, on: true } });
+    const fr = $('followFrame'); fr.style.borderColor = p.color; fr.classList.add('show');
+    $('followPill').innerHTML = `<span class="av sm" style="background:${p.color}">${escHtml(initial(p.name))}</span>Following ${escHtml(p.name)}<button class="tbtn tb bordered" id="stopFollowBtn">Stop</button>`;
+    $('stopFollowBtn').onclick = stopFollow;
+  }
+  function stopFollow() {
+    if (!following) return;
+    if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'follow', payload: { from: clientId, to: following.cid, on: false } });
+    following = null; $('followFrame').classList.remove('show');
+  }
+  function goToPerson(cid) {
+    const p = Object.values(peers).find(x => x.sender === cid) || peers[cid];
+    if (!p || !Number.isFinite(p.wx)) { toast('Wait until they move their cursor'); return; }
+    applyView({ cx: p.wx, cy: p.wy, z: cam.z });
+  }
+  function toastAction(msg, label, fn, ms = 6000) {
+    const t = $('toast');
+    t.innerHTML = `${escHtml(msg)}<button class="tbtn tb bordered">${escHtml(label)}</button>`;
+    t.querySelector('button').onclick = () => { t.classList.remove('show'); fn(); };
+    t.classList.add('show'); clearTimeout(t._id); t._id = setTimeout(() => t.classList.remove('show'), ms);
+  }
+  $('gatherBtn').onclick = () => {
+    if (!roomChannel) { toast('Join a room first — this moves everyone in the room to your view'); return; }
+    roomChannel.send({ type: 'broadcast', event: 'gather', payload: { cid: clientId, name: myName(), color: myColor(), qid: currentQ().id, ...viewWire() } });
+    toast('Brought everyone to your view');
+  };
+  function recvGather(p) {
+    if (p.qid && p.qid !== currentQ().id) return;
+    if (settings.allowBring === false) { toastAction(`${p.name} wants everyone on their view`, `Go to ${p.name}`, () => applyView(p)); return; }
+    const back = viewWire();
+    applyView(p);
+    toastAction(`${p.name} brought everyone here`, 'Go back', () => applyView(back));
+  }
+
+  // ---- room events for all of the above ----
+  function wireTiramisuRoom(ch) {
+    ch.on('broadcast', { event: 'hello' }, ({ payload }) => seePerson(payload))
+      .on('broadcast', { event: 'timer' }, ({ payload }) => { if (payload.sender !== peerId) recvTimer(payload); })
+      .on('broadcast', { event: 'timer_req' }, ({ payload }) => { if (payload.sender !== peerId && timer.state !== 'idle') ch.send({ type: 'broadcast', event: 'timer', payload: { sender: peerId, ...timerWire() } }); })
+      .on('broadcast', { event: 'follow' }, ({ payload }) => { if (payload.to !== clientId) return; if (payload.on) { followers.add(payload.from); lastCamSend = 0; sendCam(); const p = people[payload.from]; if (p) toast(`${p.name} is following your view`); } else followers.delete(payload.from); })
+      .on('broadcast', { event: 'cam' }, ({ payload }) => { if (following && payload.cid === following.cid) applyView(payload); })
+      .on('broadcast', { event: 'gather' }, ({ payload }) => { if (payload.cid !== clientId) recvGather(payload); })
+      .on('broadcast', { event: 'bye' }, ({ payload }) => { delete people[payload.cid]; if (following && following.cid === payload.cid) stopFollow(); renderPeople(); });
+  }
+  function onPresenceSync(st) {
+    const seen = new Set();
+    Object.values(st).flat().forEach(u => { if (!u.cid) return; seen.add(u.cid); seePerson(u); if (people[u.cid]) people[u.cid].presence = true; });
+    Object.values(people).forEach(p => { if (p.presence && !seen.has(p.cid)) { delete people[p.cid]; if (following && following.cid === p.cid) stopFollow(); } });
+    renderPeople();
+  }
+  function onRoomJoined() { hello(); renderPeople(); roomChannel.send({ type: 'broadcast', event: 'timer_req', payload: { sender: peerId } }); }
+  function onRoomLeft() { Object.keys(people).forEach(k => delete people[k]); followers.clear(); if (following) { following = null; $('followFrame').classList.remove('show'); } renderPeople(); }
+  window.addEventListener('pagehide', () => { if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'bye', payload: { cid: clientId } }); });
+
+  // ---- settings: tabs, colours, name, reactions ----
+  const TAB_TITLES = { inks: 'Inks', pen: 'Pen & touch', board: 'Board', keys: 'Shortcuts', room: 'Room', react: 'Reactions' };
+  function showSettingsTab(t) {
+    document.querySelectorAll('.snav').forEach(b => b.classList.toggle('on', b.dataset.stab === t));
+    document.querySelectorAll('.spane').forEach(p => p.classList.toggle('on', p.dataset.spane === t));
+    $('settingsTabTitle').textContent = TAB_TITLES[t] || 'Settings';
+  }
+  document.querySelectorAll('.snav').forEach(b => b.onclick = () => showSettingsTab(b.dataset.stab));
+  function openSettings(tab) { closeMenus(); populateSettingsUI(); showSettingsTab(tab || 'inks'); settingsBackdrop.classList.add('show'); }
+  $('openSettingsBtn').onclick = () => openSettings('inks');
+  function renderMyColorSwatches() {
+    const taken = Object.values(people).filter(p => p.cid !== clientId && (p.presence || Date.now() - p.t < 30000));
+    $('setMyColorMount').innerHTML = PEOPLE_COLORS.map(c => {
+      const who = taken.find(p => (p.color || '').toLowerCase() === c.toLowerCase());
+      const on = myColor().toLowerCase() === c.toLowerCase();
+      return `<button class="sw ${on ? 'on' : ''} ${who ? 'taken' : ''}" data-c="${c}" style="background:${c}" title="${who ? escHtml(who.name) + ' has this one' : on ? 'Your colour' : 'Use this colour'}" aria-label="${c}">${who ? `<span class="av" style="background:${c}">${escHtml(initial(who.name))}</span>` : ''}</button>`;
+    }).join('');
+    $('setMyColorMount').querySelectorAll('.sw').forEach(b => b.onclick = () => {
+      if (b.classList.contains('taken')) { toast(b.title); return; }
+      const old = myColor(); settings.myColor = b.dataset.c; saveSettings();
+      if (String(inkColor).toLowerCase() === old.toLowerCase()) inkColor = settings.myColor;
+      renderMyColorSwatches(); renderColorPaletteNew(); renderPeople(); hello(); retrack();
+    });
+  }
+  function renderExtraInks() {
+    const m = $('setColorsMount');
+    m.innerHTML = settings.colors.map((c, i) => `<label class="sw" style="background:${c}" title="Tap to change"><input type="color" value="${c}" data-i="${i}" /></label>`).join('')
+      + (settings.colors.length < 6 ? '<button class="sw sw-add" id="addInkBtn" title="Add an ink">+</button>' : '')
+      + (settings.colors.length > 1 ? '<button class="tbtn tb" id="removeInkBtn">Remove last</button>' : '');
+    m.querySelectorAll('input[type=color]').forEach(inp => {
+      inp.oninput = (e) => { inp.parentElement.style.background = e.target.value; };
+      inp.onchange = (e) => { const i = Number(inp.dataset.i), was = settings.colors[i]; settings.colors[i] = e.target.value; if (String(inkColor).toLowerCase() === String(was).toLowerCase()) inkColor = e.target.value; saveSettings(); renderColorPaletteNew(); renderExtraInks(); };
+    });
+    const add = $('addInkBtn'); if (add) add.onclick = () => { settings.colors.push('#2A1D16'); saveSettings(); renderExtraInks(); renderColorPaletteNew(); };
+    const rm = $('removeInkBtn'); if (rm) rm.onclick = () => { settings.colors.pop(); saveSettings(); renderExtraInks(); renderColorPaletteNew(); };
+  }
+  const EMOJI_BANK = '🤯 🔥 👏 😂 🤔 😭 💀 ❤️ 👍 👎 🙌 💯 ✅ ❌ ⭐ 🎉 😮 😅 🥲 😎 🤓 🧐 😴 🙃 😬 🤝 👀 💡 ⚡ 🚀 🧠 📐 📏 ✏️ 🍰 ☕ 🐢 🐇 🎯 🏆 🫠 🥳 😤 😳 🤡 👻 🙏 💪 ✨ 🌀 ➕ ➖ ✖️ ➗ ❓ ❗ 💤 🔁 ⏰ 🫡'.split(' ');
+  let quickSlot = 0;
+  function renderQuickEditor() {
+    $('setQuickMount').innerHTML = settings.quick.map((e, i) => `<button class="qslot ${i === quickSlot ? 'on' : ''}" data-i="${i}">${e}</button>`).join('');
+    $('setQuickMount').querySelectorAll('.qslot').forEach(b => b.onclick = () => { quickSlot = Number(b.dataset.i); renderQuickEditor(); });
+    $('setEmojiGrid').innerHTML = EMOJI_BANK.map(e => `<button data-e="${e}">${e}</button>`).join('');
+    $('setEmojiGrid').querySelectorAll('button').forEach(b => b.onclick = () => {
+      settings.quick[quickSlot] = b.dataset.e; quickSlot = (quickSlot + 1) % settings.quick.length; saveSettings(); renderQuickEditor(); renderPickerQuick();
+    });
+  }
+  function renderPickerQuick() {
+    const pk = $('reactPicker');
+    pk.querySelectorAll('button[data-r]').forEach(b => b.remove());
+    const sep = pk.querySelector('.tsep');
+    settings.quick.forEach(e => { const b = document.createElement('button'); b.dataset.r = e; b.textContent = e; pk.insertBefore(b, sep); });
+  }
+  function retrack() { if (roomChannel) try { roomChannel.track({ id: peerId, cid: clientId, name: myName(), color: myColor() }); } catch {} }
+  function populateTiramisuSettings() {
+    renderMyColorSwatches(); renderExtraInks(); renderQuickEditor();
+    $('setNameInput').value = myName();
+    $('setHoldReact').checked = settings.holdReact !== false;
+    $('setAllowBring').checked = settings.allowBring !== false;
+    $('setTimerSound').checked = settings.timerSound !== false;
+  }
+  $('setHoldReact').onchange = (e) => { settings.holdReact = e.target.checked; saveSettings(); };
+  $('setAllowBring').onchange = (e) => { settings.allowBring = e.target.checked; saveSettings(); };
+  $('setTimerSound').onchange = (e) => { settings.timerSound = e.target.checked; saveSettings(); };
+  $('setNameInput').onchange = (e) => {
+    const v = e.target.value.trim().slice(0, 24); if (!v) { e.target.value = myName(); return; }
+    $('roomNameInput').value = v; localStorage.setItem('sat_wb_name', v); renderPeople(); hello(); retrack();
+  };
+  $('settingsRoomBtn').onclick = () => { settingsBackdrop.classList.remove('show'); $('openRoomBtn').click(); };
+  $('roomNameInput').addEventListener('change', () => { renderPeople(); hello(); retrack(); });
+
+  window.__tiramisu = { people, timer: () => timer, following: () => following, followers, cid: () => clientId, objects: () => objects };
+
+})();

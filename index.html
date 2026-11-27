@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>SAT Math Whiteboard</title>
+  <title>Tiramisu</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600&family=Gochi+Hand&display=swap" />
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -89,13 +92,6 @@
     .peer-cursor { position:absolute; transform:translate(-2px,-2px); display:flex; align-items:center; gap:4px; font-size:11px; font-weight:700; transition:left 0.06s linear,top 0.06s linear; }
     .peer-tag { background:#111; color:#fff; padding:1px 6px; border-radius:999px; white-space:nowrap; }
 
-    .pill { position:fixed; z-index:40; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); display:flex; align-items:center; gap:3px; padding:4px; }
-    .pill-left { top:10px; left:10px; padding:4px 6px; }
-    .toolbar-top { top:10px; left:50%; transform:translateX(-50%); max-width:calc(100vw - 520px); flex-wrap:wrap; justify-content:center; }
-    .pill-right { top:10px; right:10px; }
-    .pill-bottom-left { bottom:10px; left:10px; }
-    .pill-bottom-center { bottom:10px; left:50%; transform:translateX(-50%); padding:4px 9px; gap:6px; }
-    .pill-bottom-right { bottom:10px; right:10px; }
 
     .tbtn { display:inline-flex; align-items:center; justify-content:center; gap:4px; height:30px; padding:0 8px; border:none; border-radius:7px; background:transparent; color:var(--ink); font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
     .tbtn:hover { background:#f3f4f6; }
@@ -163,15 +159,12 @@
     .keybind-btn.listening { background:#111; color:#fff; }
     .toast { position:fixed; bottom:54px; right:16px; background:#111; color:#fff; padding:7px 12px; border-radius:8px; font-size:12px; font-weight:600; z-index:120; display:none; }
     .toast.show { display:block; }
-    @media (max-width:1460px) { .toolbar-top { top:56px; max-width:calc(100vw - 20px); } .side-drawer { top:104px; } }
 
     /* ---------- iPad / touch ---------- */
     .board-stage { height:100dvh; touch-action:none; }
     html, body { overscroll-behavior:none; -webkit-touch-callout:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; }
     body.touch-ui { position:fixed; inset:0; }
     .touch-ui #boardCanvas { pointer-events:none; }
-    .touch-ui .tbtn { height:38px; min-width:38px; padding:0 9px; font-size:13px; }
-    .touch-ui .cdot { width:24px; height:24px; }
     .touch-ui .chip-btn { padding:6px 12px; font-size:12px; }
     .touch-ui .q-list-item { padding:11px 12px; }
     .touch-ui .dropdown-menu button { padding:10px 12px; font-size:13px; }
@@ -179,15 +172,12 @@
     .touch-ui .sym-btn:hover { background:#f9fafb; color:#111; }
     .touch-ui .sym-btn:active { background:#111; color:#fff; }
     .touch-ui .choice-letter-hit { width:32px; height:32px; font-size:14px; }
-    .touch-ui #checkStatusChip, .touch-ui #starQuestionBtn { padding:7px 11px !important; }
     .touch-ui .q-diagram-bar button { padding:5px 10px; }
     .touch-ui .bw-head { padding:9px 10px; touch-action:none; }
     .touch-ui .bw-head button { padding:4px 9px; font-size:14px; }
     .touch-ui .bw-resize { width:28px; height:28px; touch-action:none; }
     .touch-ui .peek-head, .touch-ui .peek-viewport { touch-action:none; }
     .touch-ui input, .touch-ui select, .touch-ui textarea { font-size:16px; } /* <16px makes iOS zoom the page on focus */
-    @media (max-width:1460px) { .touch-ui .toolbar-top { top:62px; } .touch-ui .side-drawer { top:116px; } }
-    @media (max-width:960px) { .pill-bottom-center { bottom:62px; } .toast { bottom:116px; } }
 
     /* ---------- shared Formulas window on the board ---------- */
     .cw { display:flex; flex-direction:column; min-height:0; }
@@ -217,20 +207,8 @@
     @media (max-width:640px) {
       .lbl, .ph-hide { display:none !important; }
       .sh { display:inline; }
-      :root .tbtn { height:36px; min-width:34px; padding:0 6px; font-size:13px; }
-      :root .cdot { width:22px; height:22px; }
-      :root .pill { gap:2px; padding:3px; border-radius:12px; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
-      :root .pill::-webkit-scrollbar { display:none; }
-      :root .pill-left { top:calc(6px + env(safe-area-inset-top)); left:6px; right:auto; max-width:calc(100vw - 12px); }
-      :root .pill-right { top:calc(52px + env(safe-area-inset-top)); left:6px; right:auto; max-width:calc(60vw); }
-      :root .pill-bottom-right { top:calc(52px + env(safe-area-inset-top)); bottom:auto; right:6px; max-width:calc(40vw - 16px); }
-      :root .toolbar-top { top:auto !important; bottom:calc(6px + env(safe-area-inset-bottom)); left:6px; right:6px; transform:none; max-width:none; justify-content:space-between; }
-      :root .pill-bottom-center { bottom:calc(52px + env(safe-area-inset-bottom)) !important; left:6px; transform:none; padding:3px 6px; gap:4px; max-width:calc(100vw - 130px); }
-      :root .pill-bottom-left { bottom:calc(52px + env(safe-area-inset-bottom)); left:auto; right:6px; }
       :root .dropdown { position:static; }
-      :root .dropdown-menu { position:fixed; top:auto; bottom:calc(100px + env(safe-area-inset-bottom)); left:6px; }
-      :root .side-drawer { top:calc(98px + env(safe-area-inset-top)) !important; left:6px; right:6px; bottom:calc(6px + env(safe-area-inset-bottom)); width:auto; max-width:none; }
-      :root .toast { bottom:calc(100px + env(safe-area-inset-bottom)); left:12px; right:12px; text-align:center; }
+      :root .side-drawer { top:calc(72px + env(safe-area-inset-top)) !important; left:6px; right:6px; bottom:calc(6px + env(safe-area-inset-bottom)); width:auto; max-width:none; }
       body #exitZenBtn { top:calc(6px + env(safe-area-inset-top)); right:6px; }
       .peek-window { left:6px !important; width:calc(100vw - 12px) !important; }
       .modal-backdrop { padding:6px; }
@@ -254,6 +232,238 @@
     #keysHelp td { font-size:12.5px; padding:3px 10px 3px 0; vertical-align:top; }
     #keysHelp kbd { display:inline-block; border:1px solid #d1d5db; border-bottom-width:2px; border-radius:5px; padding:0 5px; font:600 11px Inter, sans-serif; background:#f9fafb; margin:1px 0; }
     #keysHelp code { background:#f3f4f6; border-radius:4px; padding:0 4px; font-size:12px; }
+    /* ================= TIRAMISU — sticker style ================= */
+    :root { --k:#2A1D16; --mut:#6E5A4C; --crm:#FFF0E0; --yel:#FFD36E; --ok:#C9F2B5; --bad:#FFD3D3; --brd:#FFF5EC; --me:#3D6BE0; }
+    html, body { font-family:Fredoka, system-ui, sans-serif; color:var(--k); background:var(--brd); }
+    .board-stage, .board-stage.grid-none { background-color:var(--brd); }
+    .board-stage.grid-dot { background-color:var(--brd); background-image:radial-gradient(#EBD5C1 1.3px,transparent 1.4px); background-size:28px 28px; }
+    .board-stage.grid-square { background-color:var(--brd); background-image:linear-gradient(to right,#F1E1D2 1px,transparent 1px),linear-gradient(to bottom,#F1E1D2 1px,transparent 1px); background-size:28px 28px; }
+    .mut { color:var(--mut); font-weight:500; }
+    /* bars */
+    .bar { position:fixed; z-index:40; display:flex; align-items:center; gap:4px; height:50px; padding:3px; background:#fff; border:2px solid var(--k); border-radius:18px; box-shadow:0 3px 0 var(--k); }
+    .bar-tl { top:14px; left:14px; }
+    .bar-tc { top:14px; left:50%; transform:translateX(-50%); }
+    .bar-tr { top:14px; right:14px; }
+    .bar-bl { bottom:14px; left:14px; }
+    .bar-bc { bottom:14px; left:50%; transform:translateX(-50%); }
+    .bar-tray { bottom:76px; left:50%; transform:translateX(-50%); display:none; }
+    .bar-tray.show { display:flex; }
+    .sep { width:2px; height:24px; border-radius:2px; background:#EAD8C6; margin:0 3px; flex:none; }
+    .tbtn { height:40px; min-width:40px; padding:0 10px; border:2px solid transparent; border-radius:12px; background:transparent; color:var(--k); font:500 15px Fredoka, sans-serif; gap:8px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; white-space:nowrap; position:relative; transition:transform .06s; }
+    .tbtn.ib { width:40px; padding:0; }
+    .tbtn:hover { background:var(--crm); }
+    .tbtn.active, .tbtn[aria-pressed="true"] { background:var(--k); color:#fff; transform:translateY(2px); }
+    .tbtn.active:hover { background:var(--k); }
+    .tbtn:active { transform:translateY(2px); }
+    .tbtn.bordered { border-color:var(--k); box-shadow:0 2px 0 var(--k); background:#fff; }
+    .tbtn.primary { background:var(--k); color:#fff; border-color:var(--k); box-shadow:0 3px 0 var(--k); }
+    .tbtn.primary:hover { background:var(--k); }
+    .tbtn.laser { padding:0 12px 0 8px; gap:6px; }
+    .tbtn.laser.active { background:#FFE3E3; color:var(--k); border-color:var(--k); }
+    .inkdot { position:absolute; right:2px; bottom:2px; width:11px; height:11px; border-radius:50%; border:2px solid #fff; background:var(--me); display:none; }
+    .ph-only { display:none !important; }
+    .logo { display:flex; align-items:center; gap:8px; padding:0 6px; }
+    .logo-mark { width:28px; height:28px; border-radius:9px; border:2px solid var(--k); box-sizing:border-box; overflow:hidden; display:flex; flex-direction:column; transform:rotate(-6deg); box-shadow:0 2px 0 var(--k); flex:none; }
+    .logo-mark span:nth-child(1) { height:8px; background:#7A4B32; } .logo-mark span:nth-child(2) { height:8px; background:#FFF4E0; border-top:2px solid var(--k); border-bottom:2px solid var(--k); } .logo-mark span:nth-child(3) { flex:1; background:#E9B977; }
+    .logo-word { font:600 21px Fredoka, sans-serif; letter-spacing:-.01em; }
+    #openQuestionsBtn { gap:8px; } #openQuestionsBtn .mut { font-size:13px; }
+    .zoomtxt { font-size:13px; padding:0 6px; min-width:52px; }
+    .palette { display:flex; gap:2px; align-items:center; }
+    .cdot { width:24px; height:24px; border-radius:50%; border:2px solid var(--k); cursor:pointer; margin:0 6px; box-sizing:border-box; }
+    .cdot.active { outline:none; box-shadow:0 0 0 2px #fff,0 0 0 4px var(--k); }
+    .wbar { width:18px; border-radius:4px; background:var(--ink,var(--me)); display:block; }
+    .tbtn.active .wbar { background:#fff; }
+    #inkStyleBar .tbtn.active { background:var(--crm); color:var(--k); }
+    #inkStyleBar .tbtn.active .wbar { background:var(--ink,var(--me)); }
+    /* people */
+    .people { display:flex; padding:0 6px; }
+    .av { width:30px; height:30px; border-radius:50%; border:2px solid var(--k); box-sizing:border-box; color:#fff; font:600 12px Fredoka, sans-serif; display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 2px #fff; flex:none; cursor:pointer; padding:0; }
+    .people .av + .av { margin-left:-6px; }
+    .av.sm { width:22px; height:22px; font-size:10px; }
+    /* menus */
+    .menu { position:fixed; z-index:90; display:none; flex-direction:column; gap:2px; padding:8px; background:#fff; border:2px solid var(--k); border-radius:20px; box-shadow:0 4px 0 var(--k); min-width:220px; max-height:calc(100vh - 100px); overflow:auto; }
+    .menu.show { display:flex; }
+    .mi { display:flex; align-items:center; gap:10px; height:40px; padding:0 10px; border:0; border-radius:12px; background:transparent; color:var(--k); font:500 15px Fredoka, sans-serif; cursor:pointer; text-align:left; white-space:nowrap; }
+    .mi:hover { background:var(--crm); }
+    .mi.active { background:var(--k); color:#fff; }
+    .menu-sep { height:2px; background:#EAD8C6; margin:4px 6px; border-radius:2px; }
+    #moreMenu { top:76px; right:14px; }
+    .dropdown-menu { top:auto; bottom:calc(100% + 12px); left:50%; transform:translateX(-50%); background:#fff; border:2px solid var(--k); border-radius:20px; box-shadow:0 4px 0 var(--k); padding:8px; min-width:250px; max-height:70vh; overflow:auto; }
+    .dropdown-menu button { font:500 15px Fredoka, sans-serif; padding:9px 12px; border-radius:12px; color:var(--k); display:flex; align-items:center; gap:8px; }
+    .dropdown-menu button:hover { background:var(--crm); color:var(--k); }
+    .dropdown-menu button.active { background:var(--k); color:#fff; }
+    .dd-sep { font:600 12px Fredoka, sans-serif; color:var(--mut); text-transform:none; letter-spacing:0; padding:8px 12px 2px; }
+    /* question card */
+    .question-card { background:#fff; border:2px solid var(--k); border-radius:26px; box-shadow:0 4px 0 var(--k); padding:18px 22px 22px; font-family:Fredoka, sans-serif; }
+    .q-meta { font:500 14px Fredoka, sans-serif; text-transform:none; letter-spacing:0; color:var(--mut); margin-bottom:14px; }
+    #qMetaLabel .topic { display:inline-block; background:var(--crm); border:2px solid var(--k); border-radius:999px; padding:1px 12px; color:var(--k); transform:rotate(-2deg); margin-right:8px; }
+    #starQuestionBtn { width:36px; height:36px; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; font-size:20px !important; color:var(--k); }
+    #starQuestionBtn:hover { background:var(--crm); }
+    .q-prompt { font:400 17px/1.55 Fredoka, sans-serif; color:var(--k); }
+    .q-diagram-bar { border:2px solid var(--k); border-radius:12px; background:#fff; font:500 13px Fredoka, sans-serif; padding:2px 6px; }
+    .q-diagram-bar button { font:600 13px Fredoka, sans-serif; border-radius:8px; }
+    .q-diagram-bar button:hover { background:var(--crm); }
+    .q-choices { grid-template-columns:1fr; gap:8px; }
+    .choice-chip { min-height:50px; border:2px solid var(--k); border-radius:16px; box-shadow:0 2px 0 var(--k); background:#fff; font:500 17px Fredoka, sans-serif; padding:6px 12px 6px 10px; gap:12px; color:var(--k); }
+    .choice-letter-hit { width:32px; height:32px; border:2px solid var(--k); border-radius:50%; background:#fff; font:600 14px Fredoka, sans-serif; }
+    .choice-letter-hit:hover { background:var(--crm); }
+    .choice-chip.selected { background:var(--yel); border-color:var(--k); }
+    .choice-chip.selected .choice-letter-hit { background:#fff; color:var(--k); }
+    .choice-chip.correct { background:var(--ok); border-color:var(--k); }
+    .choice-chip.correct .choice-letter-hit { background:var(--k); color:#fff; }
+    .choice-chip.wrong { background:var(--bad); border-color:var(--k); }
+    .choice-chip.correct::after { content:'✓'; margin-left:auto; font-weight:600; font-size:18px; }
+    .choice-chip.wrong::after { content:'✕'; margin-left:auto; font-weight:600; font-size:18px; }
+    .pick-by { margin-left:auto; width:24px; height:24px; padding:0; border-radius:50%; border:2px solid var(--k); color:#fff; font:600 10px Fredoka, sans-serif; display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; }
+    .choice-chip.correct .pick-by, .choice-chip.wrong .pick-by { margin-left:auto; } .choice-chip.correct:has(.pick-by)::after, .choice-chip.wrong:has(.pick-by)::after { margin-left:8px; }
+    #checkStatusChip { display:flex; width:100%; height:48px; margin-top:14px; align-items:center; justify-content:center; border:2px solid var(--k); border-radius:14px; background:var(--k); color:#fff !important; text-decoration:none !important; box-shadow:0 3px 0 var(--k); font:600 16px Fredoka, sans-serif; cursor:pointer; }
+    #checkStatusChip:active { transform:translateY(3px); box-shadow:none; }
+    .gridin-input { border:2px solid var(--k); border-radius:14px; font:500 17px Fredoka, sans-serif; padding:10px 12px; box-shadow:0 2px 0 var(--k); }
+    .gridin-input.correct { border-color:var(--k); background:var(--ok); } .gridin-input.wrong { border-color:var(--k); background:var(--bad); }
+    #qCollapseBtn { display:none; font-size:16px; width:36px; height:36px; min-width:36px; }
+    /* windows on the board */
+    .board-widget { border:2px solid var(--k); border-radius:22px; box-shadow:0 4px 0 var(--k); }
+    .bw-head { background:#fff; border-bottom:2px solid var(--k); font:600 14px Fredoka, sans-serif; padding:6px 8px 6px 12px; }
+    .bw-head button { font:600 13px Fredoka, sans-serif; border-radius:10px; padding:3px 8px; }
+    .bw-head button:hover { background:var(--crm); }
+    .board-widget.bw-active { outline:3px solid var(--k); outline-offset:3px; }
+    /* cursors */
+    .peer-cursor { font:600 12px Fredoka, sans-serif; align-items:flex-start; gap:2px; }
+    .peer-tag { margin-top:12px; color:#fff; border:2px solid var(--k); border-radius:10px; padding:0 8px; background:var(--k); }
+    /* drawer, modals */
+    .side-drawer { top:76px; right:14px; bottom:76px; border:2px solid var(--k); border-radius:24px; box-shadow:0 4px 0 var(--k); }
+    .drawer-head { background:#fff; border-bottom:2px solid var(--k); font:600 14px Fredoka, sans-serif; }
+    .chip-btn { border:2px solid var(--k); border-radius:999px; font:500 13px Fredoka, sans-serif; padding:4px 11px; }
+    .chip-btn.active { background:var(--k); color:#fff; border-color:var(--k); }
+    .f-card { border:2px solid var(--k); border-radius:16px; }
+    .modal-backdrop { background:rgba(42,29,22,.28); }
+    .modal { border:2px solid var(--k); border-radius:26px; box-shadow:0 4px 0 var(--k); font-family:Fredoka, sans-serif; }
+    .modal-head { background:#fff; border-bottom:2px solid var(--k); font:600 18px Fredoka, sans-serif; padding:12px 16px; }
+    .modal-body { font:400 15px Fredoka, sans-serif; }
+    .set-input, .inp, .sel { height:40px; border:2px solid var(--k); border-radius:12px; padding:0 12px; font:500 15px Fredoka, sans-serif; background:#fff; color:var(--k); }
+    .set-section { border:2px solid var(--k); border-radius:18px; }
+    .toast.show { display:flex; align-items:center; }
+    .toast { background:#fff; color:var(--k); border:2px solid var(--k); border-radius:14px; box-shadow:0 3px 0 var(--k); font:500 14px Fredoka, sans-serif; bottom:80px; right:14px; padding:9px 14px; }
+    .react-picker, .pin-menu, .sym-bar, #selBar, .replay-bar { background:#fff; color:var(--k); border:2px solid var(--k); border-radius:20px; box-shadow:0 4px 0 var(--k); font-family:Fredoka, sans-serif; }
+    .react-picker .rp-lost { background:var(--crm); color:var(--k); border:2px solid var(--k); font:600 14px Fredoka, sans-serif; }
+    .pin-menu .pm-text { color:var(--k); }
+    .pin-menu button, .replay-bar button, #selBar button { background:#fff; color:var(--k); border:2px solid var(--k); border-radius:12px; font:500 14px Fredoka, sans-serif; }
+    .pin-menu #pinDoneBtn { background:var(--k); color:#fff; border-color:var(--k); }
+    .replay-bar button:hover, #selBar button:hover { background:var(--crm); }
+    .replay-bar .rp-title { color:var(--k); }
+    .sym-btn { border:2px solid var(--k); border-radius:10px; background:#fff; font:500 15px Fredoka, sans-serif; }
+    .sym-btn:hover { background:var(--crm); color:var(--k); }
+    #textEditorBox { border:2px dashed var(--k); border-radius:10px; }
+    #celebrateBanner { border:2px solid var(--k); border-radius:20px; box-shadow:0 4px 0 var(--k); background:var(--ok); font-family:Fredoka, sans-serif; }
+    .fx-name { background:var(--k); border:2px solid var(--k); font-family:Fredoka, sans-serif; }
+    #exitZenBtn { top:14px; right:14px; border:2px solid var(--k); box-shadow:0 3px 0 var(--k); background:#fff; border-radius:14px; height:44px; padding:0 14px; }
+    #keysHelp .kh-card { border:2px solid var(--k); border-radius:24px; box-shadow:0 4px 0 var(--k); font-family:Fredoka, sans-serif; }
+    #keysHelp kbd { border:2px solid var(--k); border-radius:8px; font:600 12px Fredoka, sans-serif; box-shadow:0 2px 0 var(--k); }
+    /* settings */
+    .modal.settings { max-width:1000px; height:min(760px,90vh); max-height:none; flex-direction:row; }
+    .snavbar { width:220px; flex:none; border-right:2px solid var(--k); background:#FFFAF4; padding:16px 12px; display:flex; flex-direction:column; gap:4px; }
+    .stitle { font:600 22px Fredoka, sans-serif; padding:0 6px 8px; }
+    .snav { display:flex; align-items:center; gap:10px; height:42px; padding:0 10px; border:2px solid transparent; border-radius:12px; background:transparent; font:500 15px Fredoka, sans-serif; color:var(--k); cursor:pointer; text-align:left; }
+    .snav:hover { background:var(--crm); } .snav.on { background:var(--crm); border-color:var(--k); }
+    .spanes { flex:1; min-width:0; display:flex; flex-direction:column; padding:10px 26px 18px; overflow:hidden; }
+    .shead { display:flex; align-items:center; padding:6px 0; } .shead .stitle { padding:0; }
+    .spane { display:none; flex-direction:column; overflow-y:auto; padding-right:4px; user-select:text; }
+    .spane.on { display:flex; }
+    .srow { display:flex; align-items:center; gap:16px; padding:14px 0; border-bottom:2px dashed #EAD8C6; }
+    .srow.stack { flex-direction:column; align-items:stretch; gap:10px; }
+    .stext { flex:1; display:flex; flex-direction:column; gap:2px; min-width:0; }
+    .st { font:600 16px Fredoka, sans-serif; } .ss { font:400 13px Fredoka, sans-serif; color:var(--mut); }
+    .sctrl { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .toggle { appearance:none; -webkit-appearance:none; width:52px; height:30px; border:2px solid var(--k); border-radius:999px; background:#fff; position:relative; cursor:pointer; box-shadow:0 2px 0 var(--k); flex:none; margin:0; }
+    .toggle::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--k); box-sizing:border-box; transition:left .12s; }
+    .toggle:checked { background:var(--k); } .toggle:checked::after { left:25px; background:#fff; border:2px solid var(--k); }
+    .rangewrap { display:flex; align-items:center; gap:10px; } .rangewrap input { width:220px; accent-color:var(--k); } .rv { font:600 14px Fredoka, sans-serif; min-width:64px; }
+    .swatches { display:flex; gap:14px; flex-wrap:wrap; padding:4px; }
+    .sw { position:relative; width:44px; height:44px; border-radius:50%; border:2px solid var(--k); cursor:pointer; padding:0; flex:none; }
+    .sw.on { box-shadow:0 0 0 3px #fff,0 0 0 5px var(--k); }
+    .sw.taken { opacity:.45; cursor:not-allowed; }
+    .sw .av { position:absolute; right:-7px; bottom:-7px; width:22px; height:22px; font-size:10px; }
+    .sw input[type=color] { position:absolute; inset:0; opacity:0; cursor:pointer; }
+    .sw-add { border-style:dashed; background:#fff; display:flex; align-items:center; justify-content:center; font:600 20px Fredoka, sans-serif; }
+    .keygrid { display:grid; grid-template-columns:1fr 1fr; gap:0 28px; }
+    .keygrid .set-row { height:46px; border-bottom:2px dashed #EAD8C6; font:500 15px Fredoka, sans-serif !important; text-transform:none; }
+    .keybind-btn { min-width:44px; height:34px; border:2px solid var(--k); border-radius:10px; background:#fff; box-shadow:0 2px 0 var(--k); font:600 14px Fredoka, sans-serif; }
+    .keybind-btn.listening { background:var(--crm); color:var(--k); box-shadow:none; transform:translateY(2px); }
+    .adv { padding:12px 0; } .adv summary { cursor:pointer; font:500 15px Fredoka, sans-serif; color:var(--mut); }
+    .quickrow { display:flex; gap:10px; flex-wrap:wrap; padding-bottom:6px; }
+    .qslot { width:56px; height:56px; border:2px solid var(--k); border-radius:16px; background:#fff; box-shadow:0 2px 0 var(--k); font-size:28px; cursor:pointer; }
+    .qslot.on { background:var(--crm); box-shadow:none; transform:translateY(2px); }
+    .emojigrid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:2px; padding:12px 0; }
+    .emojigrid button { height:42px; border:0; border-radius:10px; background:transparent; font-size:24px; cursor:pointer; }
+    .emojigrid button:hover { background:var(--crm); }
+    /* question picker */
+    .qpick-back { align-items:flex-start; justify-content:flex-start; padding:76px 14px 14px; }
+    .qpick { width:min(780px,100%); max-height:calc(100vh - 92px); background:#fff; border:2px solid var(--k); border-radius:24px; box-shadow:0 4px 0 var(--k); padding:18px; display:flex; flex-direction:column; gap:14px; font-family:Fredoka, sans-serif; }
+    .qp-row { display:flex; gap:10px; align-items:center; } .qp-row.wrap { flex-wrap:wrap; }
+    .qp-jump { flex:1; min-width:0; display:flex; align-items:center; gap:8px; height:44px; border:2px solid var(--k); border-radius:14px; padding:0 12px; }
+    .qp-row > .tbtn { flex:none; } .qp-jump input { min-width:0; border:0; outline:0; flex:1; font:500 16px Fredoka, sans-serif; background:transparent; color:var(--k); }
+    .qp-chips { display:flex; flex-wrap:wrap; gap:8px; }
+    .qp-chips button { height:36px; border:2px solid var(--k); border-radius:999px; padding:0 12px; font:500 14px Fredoka, sans-serif; background:#fff; color:var(--k); cursor:pointer; display:flex; align-items:center; gap:6px; }
+    .qp-chips button.on { background:var(--k); color:#fff; }
+    .qp-chips small { font-size:12px; opacity:.7; }
+    .seg { display:flex; gap:4px; background:var(--crm); border-radius:14px; padding:4px; }
+    .seg button { height:34px; border:2px solid transparent; border-radius:10px; padding:0 12px; background:transparent; font:500 14px Fredoka, sans-serif; color:var(--k); cursor:pointer; }
+    .seg button.on { background:#fff; border-color:var(--k); }
+    .qp-list { overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding:4px 6px 6px 2px; min-height:120px; }
+    .qp-sec { display:flex; flex-direction:column; gap:8px; } .qp-sec h4 { margin:0; font:600 15px Fredoka, sans-serif; }
+    .qp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(54px,1fr)); gap:8px; }
+    .qtile { position:relative; height:44px; border:2px solid var(--k); border-radius:12px; background:#fff; box-shadow:0 2px 0 var(--k); font:500 14px Fredoka, sans-serif; color:var(--k); cursor:pointer; }
+    .qtile.ok { background:var(--ok); } .qtile.bad { background:var(--bad); }
+    .qtile.cur { background:var(--k); color:#fff; box-shadow:none; transform:translateY(2px); }
+    .qtile .st { position:absolute; top:-7px; right:-7px; width:18px; height:18px; border-radius:50%; background:#fff; border:2px solid var(--k); font-size:10px; display:flex; align-items:center; justify-content:center; line-height:1; }
+    .qp-legend { display:flex; gap:16px; align-items:center; font:400 13px Fredoka, sans-serif; color:var(--mut); flex-wrap:wrap; }
+    .qp-legend span { display:flex; align-items:center; gap:6px; } .lg { width:14px; height:14px; border-radius:4px; border:2px solid var(--k); display:inline-block; } .lg.ok { background:var(--ok); } .lg.bad { background:var(--bad); }
+    .confirm { max-width:380px; padding:18px; gap:10px; } .confirm h3 { margin:0; font:600 19px Fredoka, sans-serif; } .confirm p { margin:0; font:400 15px/1.45 Fredoka, sans-serif; } .crow { display:flex; gap:8px; justify-content:flex-end; padding-top:6px; }
+    /* timer, follow */
+    #timerBar .tbtn { font-variant-numeric:tabular-nums; } #timerText { font-weight:600; font-size:17px; }
+    #timerBar.up { background:var(--k); color:#fff; } #timerBar.up .tbtn { color:#fff; } #timerBar.paused #timerText { opacity:.5; }
+    .timer-pop { top:76px; left:50%; transform:translateX(-50%); width:270px; gap:10px; padding:14px; }
+    .tp-presets { display:flex; gap:8px; } .tp-presets .tbtn { flex:1; } .tp-step { display:flex; align-items:center; gap:8px; justify-content:center; font:600 17px Fredoka, sans-serif; }
+    #followFrame { position:fixed; inset:0; pointer-events:none; z-index:38; display:none; border:6px solid var(--me); border-radius:14px; }
+    #followFrame.show { display:block; }
+    .follow-pill { position:absolute; left:50%; top:74px; transform:translateX(-50%); pointer-events:auto; display:flex; align-items:center; gap:8px; height:44px; padding:3px 3px 3px 6px; background:#fff; border:2px solid var(--k); border-radius:16px; box-shadow:0 3px 0 var(--k); font:500 15px Fredoka, sans-serif; white-space:nowrap; }
+    .toast .tbtn { height:32px; margin-left:8px; }
+    /* touch + phone */
+    .touch-ui .tbtn { height:44px; min-width:44px; } .touch-ui .tbtn.ib { width:44px; } .touch-ui .bar { height:54px; }
+    .touch-ui .bar-tray { bottom:82px; }
+    @media (max-width:1180px) { .bar-tr .lbl, .bar-bc .lbl { display:none; } .bar-tc { left:auto; right:14px; top:76px; transform:none; } }
+    @media (max-width:640px) {
+      .bar { height:52px; border-radius:18px; overflow:visible; }
+      .bar-tl { top:calc(10px + env(safe-area-inset-top)); left:10px; max-width:calc(100vw - 150px); }
+      .bar-tl .logo { display:none; }
+      #openQuestionsBtn { padding:0 4px; min-width:0; } #openQuestionsBtn .mut { display:none; }
+      .bar-tr { top:calc(10px + env(safe-area-inset-top)); right:10px; }
+      .bar-tr .people, .bar-tr #gatherBtn, .bar-tr .sep { display:none; }
+      .bar-tc { top:auto; bottom:calc(84px + env(safe-area-inset-bottom)); left:118px; right:auto; transform:none; height:48px; }
+      #openQuestionsBtn #qNavTopic { display:none; } #openQuestionsBtn #qNavText { display:inline; font-size:15px; color:var(--k); font-weight:600; }
+      .bar-bc { bottom:calc(12px + env(safe-area-inset-bottom)); left:10px; right:10px; transform:none; justify-content:space-between; height:60px; }
+      .bar-bc .sep, .bar-bc [data-tool="select"], .bar-bc [data-tool="cursor"], .bar-bc #shapesBtn { display:none; }
+      .bar-bc .dropdown { width:0; }
+      .bar-bc .ph-only { display:inline-flex !important; }
+      .bar-bc .tbtn.laser { width:44px; padding:0; }
+      .inkdot { display:block; }
+      .bar-bl { bottom:calc(84px + env(safe-area-inset-bottom)); left:10px; height:48px; }
+      .bar-tray { bottom:calc(142px + env(safe-area-inset-bottom)); left:10px; right:10px; transform:none; height:52px; justify-content:space-between; }
+      .bar-tray .sep { display:none; }
+      .bar-tray .lbl { display:none; }
+      .tools-sheet { left:10px !important; right:10px; bottom:calc(84px + env(safe-area-inset-bottom)); top:auto !important; flex-direction:row; flex-wrap:wrap; }
+      .tools-sheet .mi { flex:1 1 40%; height:56px; border:2px solid var(--k); }
+      #moreMenu { top:calc(70px + env(safe-area-inset-top)); right:10px; }
+      .dropdown-menu { position:fixed; left:10px; right:10px; transform:none; bottom:calc(84px + env(safe-area-inset-bottom)); top:auto; }
+      #qCollapseBtn { display:inline-flex; }
+      .question-card.collapsed .q-diagram-wrap, .question-card.collapsed .q-prompt { display:none; }
+      .question-card.collapsed .q-choices { grid-template-columns:repeat(4,1fr); }
+      .question-card.collapsed .choice-chip > span:not(.choice-letter-hit):not(.pick-by) { display:none; }
+      .q-choices { grid-template-columns:1fr 1fr; }
+      .modal.settings { flex-direction:column; height:94vh; } .snavbar { width:auto; flex-direction:row; overflow-x:auto; border-right:0; border-bottom:2px solid var(--k); padding:8px; } .snavbar .stitle, .snavbar #resetSettingsBtn { display:none; } .snav span { display:none; } .spanes { padding:8px 14px; } .rangewrap input { width:140px; } .keygrid { grid-template-columns:1fr; } .emojigrid { grid-template-columns:repeat(8,minmax(0,1fr)); }
+      .qpick-back { padding:70px 8px 8px; } .qpick { max-height:calc(100vh - 80px); padding:12px; }
+      .toast { top:calc(72px + env(safe-area-inset-top)); bottom:auto; left:10px; right:10px; text-align:center; justify-content:center; }
+    }
   </style>
 </head>
 <body>
@@ -264,8 +474,8 @@
       <div class="q-meta">
         <span id="qMetaLabel">Topic · Difficulty</span>
         <div style="display:flex;gap:10px;align-items:center;">
-          <span id="starQuestionBtn" style="cursor:pointer;font-size:13px;" title="Mark for Review">☆</span>
-          <span id="checkStatusChip" style="cursor:pointer;color:#111;text-decoration:underline;">Check Answer</span>
+          <button class="tbtn ib hide-in-zen" id="qCollapseBtn" title="Hide question">▴</button>
+          <span id="starQuestionBtn" style="cursor:pointer;" title="Mark for review">☆</span>
         </div>
       </div>
       <div class="q-diagram-wrap" id="qDiagramWrap">
@@ -284,92 +494,133 @@
       <div class="gridin-row" id="qGridIn" style="display:none;">
         <input type="text" class="gridin-input" id="gridInField" placeholder="Type number or fraction (e.g. 12 or 3/4)" />
       </div>
+      <button id="checkStatusChip">Check</button>
     </div>
   </div>
   <canvas id="boardCanvas"></canvas>
   <div id="cursorsLayer"></div>
 </div>
 
-<div class="pill pill-left hide-in-zen">
-  <button class="tbtn" id="prevQBtn">◀</button>
-  <button class="tbtn" id="openQuestionsBtn">📚 <span id="qNavText">1 / 1</span> ▾</button>
-  <button class="tbtn" id="nextQBtn">▶</button>
-  <span class="tsep"></span>
-  <button class="tbtn" id="openRoomBtn">🌐 <span id="roomBadgeText">Room</span></button>
-  <button class="tbtn" id="zenBtn" title="Zen">👁️<span class="lbl"> Zen</span></button>
+<div class="bar bar-tl hide-in-zen" id="barTL">
+  <div class="logo" aria-label="Tiramisu"><span class="logo-mark" aria-hidden="true"><span></span><span></span><span></span></span><span class="logo-word">tiramisu</span></div><span class="sep ph-hide"></span>
+  <button class="tbtn ib" id="prevQBtn" title="Previous question" aria-label="Previous question"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
+  <button class="tbtn tb" id="openQuestionsBtn" aria-haspopup="dialog" title="Choose a question"><span id="qNavTopic">Question</span><span class="mut" id="qNavText">1 / 1</span><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+  <button class="tbtn ib" id="nextQBtn" title="Next question" aria-label="Next question"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
 </div>
-<button class="pill tbtn" id="exitZenBtn" style="padding:6px 12px;border:1px solid #111;">✕ Exit Zen</button>
+<button class="tbtn tb" id="exitZenBtn"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>Exit Zen</button>
 
-<div class="pill toolbar-top" id="mainToolbar">
-  <button class="tbtn" data-tool="cursor" title="Cursor (1)">🖱️<span class="lbl"> Cursor</span></button>
-  <button class="tbtn" data-tool="select" title="Select (V)">⬚<span class="lbl"> Select</span></button>
-  <span class="tsep"></span>
-  <button class="tbtn active" data-tool="pen" title="Pen (P)">✏️<span class="lbl"> Pen</span></button>
-  <button class="tbtn" data-tool="highlighter" title="Highlighter (H)">🖍️<span class="lbl"> High</span></button>
-  <button class="tbtn" data-tool="laser" title="Laser (L)">🔴<span class="lbl"> Laser</span></button>
-  <button class="tbtn" data-tool="eraser" title="Stroke Eraser (E)">🧽<span class="lbl"> Erase</span></button>
-  <span class="tsep"></span>
-  <div class="dropdown">
-    <button class="tbtn" id="shapesBtn" title="Shapes">📐<span class="lbl"> Shapes</span> ▾</button>
-    <div class="dropdown-menu" id="shapesMenu">
-      <button data-shape="line">╱ Line (drag)</button>
-      <button data-shape="dashed">┄ Dashed Line (drag)</button>
-      <button data-shape="circle">◯ Circle + Center (drag)</button>
-      <button data-shape="rightTriangle">⊿ Right Triangle 90° (drag)</button>
-      <button data-shape="isoTriangle">△ Triangle (drag)</button>
-      <button data-stamp="306090">Stamp: 30-60-90</button>
-      <button data-stamp="454590">Stamp: 45-45-90</button>
-      <button id="addGridBtn">▦ Coordinate grid (tap = point)</button>
-      <div class="dd-sep">Marks</div>
-      <button data-shape="rightMark">∟ Right-angle mark (drag from the corner)</button>
-      <button data-shape="tick">| Equal side (drag along the side)</button>
-      <button data-shape="tick2">‖ Equal side ×2</button>
-      <button data-shape="angleArc">◜ Angle arc (start at the vertex, sweep around)</button>
-      <button data-shape="arrow">→ Arrow</button>
-    </div>
-  </div>
-  <button class="tbtn active" id="snapBtn" title="Snap shapes">✨<span class="lbl"> Snap</span></button>
-  <button class="tbtn" data-tool="text" title="Text (T)"><b style="font-family:Georgia,serif;">T</b><span class="lbl"> Text</span></button>
+<div class="bar bar-tc hide-in-zen" id="timerBar">
+  <button class="tbtn tb" id="timerBtn" title="Timer for the whole room (K)"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.5 1.5M9.5 3h5"/></svg><span id="timerText">Timer</span></button>
+  <button class="tbtn ib" id="timerToggle" title="Pause for everyone" aria-label="Pause or resume the timer" style="display:none"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6v12M15 6v12"/></svg></button>
 </div>
 
-<div class="pill pill-right hide-in-zen">
-  <button class="tbtn" id="tabFormulasBtn" title="Formulas window (shared)">📐<span class="lbl"> Formulas</span></button>
-  <button class="tbtn" id="tabDesmosBtn" title="Desmos (shared)">📈<span class="lbl"> Desmos</span></button>
-  <button class="tbtn" id="tabPhotosBtn" title="Photos">🖼️<span class="lbl"> Photos</span> (<span id="photoCount">0</span>)</button>
-  <button class="tbtn" id="reactBtn" title="React, or say &quot;I'm lost here&quot; (or press and hold anywhere on the board)">😀<span class="lbl"> React</span></button>
-  <button class="tbtn" id="replayBtn" title="Replay how this board was written, step by step">▶<span class="lbl"> Replay</span></button>
-  <span class="tsep"></span>
-  <button class="tbtn ph-hide" id="exportPngBtn" title="Download board as PNG"><span class="lbl">⬇ </span>PNG</button>
-  <button class="tbtn ph-hide" id="keysHelpBtn" title="Shortcuts (?)">⌨️</button>
-  <button class="tbtn" id="openSettingsBtn">⚙️</button>
+<div class="bar bar-tr hide-in-zen" id="barTR">
+  <div class="people" id="peopleMount" aria-label="People in the room"></div>
+  <button class="tbtn tb" id="gatherBtn" title="Bring everyone to my view (B)"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/></svg><span class="lbl">Bring everyone</span></button>
+  <span class="sep"></span>
+  <button class="tbtn tb" id="tabFormulasBtn" title="Formulas (F)"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H7l6 7-6 7h10"/></svg><span class="lbl">Formulas</span></button>
+  <button class="tbtn tb" id="tabDesmosBtn" title="Desmos (G)"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16h16"/><path d="M7 15c2.5-7 5-7 7.5-2.5S18 14 20 7"/></svg><span class="lbl">Desmos</span></button>
+  <span class="sep ph-hide"></span>
+  <button class="tbtn ib ph-hide" id="reactBtn" title="React, or say &quot;I'm lost here&quot; (or press and hold on the board)" aria-label="React"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.6 14.2c.9 1.3 2 1.9 3.4 1.9s2.5-.6 3.4-1.9M9 9.6v.6M15 9.6v.6"/></svg></button>
+  <button class="tbtn ib" id="moreBtn" title="More" aria-label="More" aria-haspopup="menu"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/></svg></button>
 </div>
 
-<div class="pill pill-bottom-left hide-in-zen">
-  <button class="tbtn ph-hide" id="boardZoomOut">−</button>
-  <button class="tbtn ph-hide" id="boardZoomReset">100%</button>
-  <button class="tbtn ph-hide" id="boardZoomIn">+</button>
-  <span class="tsep ph-hide"></span>
-  <button class="tbtn" id="undoBtn">↩</button>
-  <button class="tbtn" id="redoBtn">↪</button>
-  <button class="tbtn ph-hide" id="gridBtn">▦</button>
-  <button class="tbtn" id="clearAllBtn">🗑️</button>
-</div>
-
-<div class="pill pill-bottom-center" id="inkStyleBar">
-  <div id="colorPaletteMount" style="display:flex;gap:5px;align-items:center;"></div>
-  <span class="tsep"></span>
-  <button class="tbtn" data-width="2"><span class="lbl">Thin</span><span class="sh">S</span></button>
-  <button class="tbtn active" data-width="3.5"><span class="lbl">Med</span><span class="sh">M</span></button>
-  <button class="tbtn" data-width="6"><span class="lbl">Bold</span><span class="sh">L</span></button>
-  <span class="tsep ph-hide"></span><span id="panHintText" class="ph-hide" style="font-size:11px;color:#6b7280;padding:0 3px;">Right-drag: Pan</span>
-</div>
-
-<div class="pill pill-bottom-right hide-in-zen">
-  <button class="tbtn" id="soloModeBtn" title="Solo mode: hide answers/photos while the student works">🧑‍🎓<span class="lbl"> Solo: <span id="soloState">OFF</span></span></button>
-  <button class="tbtn" id="exportBtn">💾</button>
-  <button class="tbtn" id="importBtn">📂</button>
+<div class="menu" id="moreMenu" role="menu">
+  <button class="mi" id="openRoomBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="3"/><circle cx="16.5" cy="10" r="2.5"/><path d="M3.5 19c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5M14.5 15.5c2.5-.4 4.8.8 5.8 3.5"/></svg><span>Room <span class="mut" id="roomBadgeText">Local</span></span></button>
+  <button class="mi" id="tabPhotosBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M4 16l5-5 4 4 2.5-2.5L20 17"/></svg><span>Photos <span class="mut">(<span id="photoCount">0</span>)</span></span></button>
+  <button class="mi" id="replayBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 108-8c-2.5 0-4.6 1.1-6 2.8"/><path d="M4 3.5V7h3.5"/></svg><span>Replay</span></button>
+  <button class="mi" id="exportPngBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span>Export PNG</span></button>
+  <button class="mi" id="gridBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4zM4 12h16M12 4v16"/></svg><span>Background</span></button>
+  <button class="mi" id="zenBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg><span>Zen mode</span></button>
+  <button class="mi" id="soloModeBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1-4 3.7-6 7-6s6 2 7 6"/></svg><span>Solo: <span id="soloState">OFF</span></span></button>
+  <button class="mi" id="exportBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></svg><span>Save board file</span></button>
+  <button class="mi" id="importBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5V18a1.5 1.5 0 001.5 1.5h14a1.5 1.5 0 001.5-1.5V9.5A1.5 1.5 0 0019 8h-7l-2-2.5H5A1.5 1.5 0 003.5 7z"/></svg><span>Open board file</span></button>
+  <button class="mi" id="keysHelpBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg><span>Shortcuts</span></button>
+  <button class="mi" id="openSettingsBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg><span>Settings</span></button>
+  <span class="menu-sep"></span>
+  <button class="mi" id="clearMineBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 15.5l9-9 6 6-6.5 6.5H8.5z"/><path d="M10 9.5l6 6M13 19h7"/></svg><span>Clear my ink</span></button>
+  <button class="mi" id="clearAllBtn"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg><span>Clear all…</span></button>
   <input type="file" id="importInput" accept=".json" hidden />
 </div>
+
+<div class="bar bar-bl hide-in-zen" id="barBL">
+  <button class="tbtn ib" id="undoBtn" title="Undo my last change (Ctrl+Z)" aria-label="Undo"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg></button>
+  <button class="tbtn ib" id="redoBtn" title="Redo (Ctrl+Y)" aria-label="Redo"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 000 11H13"/></svg></button>
+  <span class="sep ph-hide"></span>
+  <button class="tbtn ib ph-hide" id="boardZoomOut" aria-label="Zoom out"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h12"/></svg></button>
+  <button class="tbtn tb ph-hide zoomtxt" id="boardZoomReset">100%</button>
+  <button class="tbtn ib ph-hide" id="boardZoomIn" aria-label="Zoom in"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h12M12 6v12"/></svg></button>
+</div>
+
+<div class="bar bar-tray" id="inkStyleBar">
+  <span class="mut lbl" style="padding:0 2px 0 8px">Your ink</span>
+  <div id="colorPaletteMount" class="palette"></div>
+  <span class="sep"></span>
+  <button class="tbtn ib" data-width="2" aria-label="Thin"><span class="wbar" style="height:2px"></span></button>
+  <button class="tbtn ib active" data-width="3.5" aria-label="Medium"><span class="wbar" style="height:4px"></span></button>
+  <button class="tbtn ib" data-width="6" aria-label="Bold"><span class="wbar" style="height:8px"></span></button>
+</div>
+
+<div class="bar bar-bc toolbar-top" id="mainToolbar">
+  <button class="tbtn ib" data-tool="select" title="Select / lasso (V)" aria-label="Select"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5l12 7.2-5.3 1.6-2.3 5.2z"/></svg></button>
+  <button class="tbtn ib" data-tool="cursor" title="Hand: move the board, use windows (1)" aria-label="Hand"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12V6a1.5 1.5 0 013 0v5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6.5a1.5 1.5 0 013 0V15c0 3.5-2.6 6-6 6-2.6 0-4.3-1.3-5.4-3.4L4 14.6a1.5 1.5 0 012.6-1.5L8 15"/></svg></button>
+  <span class="sep"></span>
+  <button class="tbtn ib active" data-tool="pen" title="Pen (P)" aria-label="Pen"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5l3.5 3.5L8.5 19z"/><path d="M14 7l3.5 3.5"/></svg><span class="inkdot" id="penInkDot"></span></button>
+  <button class="tbtn ib" data-tool="highlighter" title="Highlighter (H)" aria-label="Highlighter"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5L7 20h4.5l1.5-2.5"/><path d="M9 14l8-10 4 3.2-8 10z"/></svg></button>
+  <button class="tbtn ib" data-tool="eraser" title="Eraser — your own ink (E)" aria-label="Eraser"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 15.5l9-9 6 6-6.5 6.5H8.5z"/><path d="M10 9.5l6 6M13 19h7"/></svg></button>
+  <span class="sep"></span>
+  <div class="dropdown">
+    <button class="tbtn ib" id="shapesBtn" title="Shapes, grid and marks" aria-label="Shapes"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20h9l-4.5-8z"/><circle cx="16.5" cy="8" r="4"/></svg></button>
+    <div class="dropdown-menu" id="shapesMenu">
+      <button id="snapBtn" class="active"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l1.8 5.2L19 11l-5.2 1.8L12 18l-1.8-5.2L5 11l5.2-1.8z"/></svg> Snap rough shapes</button>
+      <div class="dd-sep">Shapes</div>
+      <button data-shape="line">╱ Line</button>
+      <button data-shape="dashed">┄ Dashed line</button>
+      <button data-shape="circle">◯ Circle + centre</button>
+      <button data-shape="rightTriangle">⊿ Right triangle</button>
+      <button data-shape="isoTriangle">△ Triangle</button>
+      <button data-shape="arrow">→ Arrow</button>
+      <button id="addGridBtn">▦ Coordinate grid (tap = point)</button>
+      <div class="dd-sep">Marks</div>
+      <button data-shape="rightMark">∟ Right-angle mark</button>
+      <button data-shape="tick">| Equal side</button>
+      <button data-shape="tick2">‖ Equal side ×2</button>
+      <button data-shape="angleArc">◜ Angle arc</button>
+      <div class="dd-sep">Stamps</div>
+      <button data-stamp="306090">30-60-90 triangle</button>
+      <button data-stamp="454590">45-45-90 triangle</button>
+    </div>
+  </div>
+  <button class="tbtn ib" data-tool="text" title="Text and math (T)" aria-label="Text"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6V4.5h14V6M12 4.5v15M9 19.5h6"/></svg></button>
+  <span class="sep"></span>
+  <button class="tbtn tb laser" data-tool="laser" title="Laser (L)" aria-label="Laser"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="#E5484D" stroke-width="2" opacity=".45"/><circle cx="12" cy="12" r="4.8" fill="#E5484D" stroke="#2A1D16" stroke-width="1.8"/></svg><span class="lbl">Laser</span></button>
+  <button class="tbtn ib ph-only" id="phoneMoreTools" aria-label="More tools"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h12M12 6v12"/></svg></button>
+</div>
+<div class="menu tools-sheet" id="toolsSheet" role="menu">
+  <button class="mi" data-sheet-tool="select"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5l12 7.2-5.3 1.6-2.3 5.2z"/></svg><span>Select</span></button>
+  <button class="mi" data-sheet-tool="cursor"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12V6a1.5 1.5 0 013 0v5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6.5a1.5 1.5 0 013 0V15c0 3.5-2.6 6-6 6-2.6 0-4.3-1.3-5.4-3.4L4 14.6a1.5 1.5 0 012.6-1.5L8 15"/></svg><span>Hand</span></button>
+  <button class="mi" data-sheet-tool="shapes"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20h9l-4.5-8z"/><circle cx="16.5" cy="8" r="4"/></svg><span>Shapes</span></button>
+  <button class="mi" data-sheet-tool="react"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.6 14.2c.9 1.3 2 1.9 3.4 1.9s2.5-.6 3.4-1.9M9 9.6v.6M15 9.6v.6"/></svg><span>React</span></button>
+</div>
+
+<div class="modal-backdrop qpick-back" id="qPickerBackdrop">
+  <div class="qpick" id="qPicker" role="dialog" aria-label="Choose a question">
+    <div class="qp-row">
+      <label class="qp-jump"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg><input id="qpJump" inputmode="numeric" placeholder="Jump to #  ·  1–526" /></label>
+      <button class="tbtn tb bordered" id="qpRandom">Random</button>
+      <button class="tbtn ib" id="qpClose" aria-label="Close"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="qp-chips" id="qpTopics"></div>
+    <div class="qp-row wrap"><div class="seg" id="qpDiff"></div><div class="seg" id="qpStatus"></div></div>
+    <div class="qp-list" id="qpList"></div>
+    <div class="qp-legend"><span><i class="lg ok"></i>got right</span><span><i class="lg bad"></i>got wrong</span><span><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg> starred</span><span style="flex:1"></span><span>Opening a question moves the whole room there.</span></div>
+  </div>
+</div>
+<div class="modal-backdrop" id="confirmBackdrop"><div class="modal confirm" role="alertdialog" aria-labelledby="confirmTitle"><h3 id="confirmTitle">Clear the whole board?</h3><p id="confirmText">Everyone's ink, text and shapes on this question. Anyone can undo it.</p><div class="crow"><button class="tbtn tb bordered" id="confirmCancel">Cancel</button><button class="tbtn tb primary" id="confirmOk">Clear all</button></div></div></div>
+<div class="menu" id="personMenu" role="menu"></div>
+<div id="followFrame"><div class="follow-pill" id="followPill"></div></div>
+<div class="menu timer-pop" id="timerPop" role="dialog" aria-label="Timer"><div class="tp-presets"><button class="tbtn tb bordered" data-min="5">5 min</button><button class="tbtn tb bordered" data-min="10">10 min</button><button class="tbtn tb bordered" data-min="35">35 min</button></div><div class="tp-step"><button class="tbtn ib" id="tpLess" aria-label="Less"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h12"/></svg></button><span id="tpMin">24 min</span><button class="tbtn ib" id="tpMore" aria-label="More"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h12M12 6v12"/></svg></button></div><button class="tbtn tb primary" id="tpStart">Start for everyone</button><button class="tbtn tb" id="tpReset" style="display:none">Reset</button></div>
+
 
 <textarea id="textEditorBox" rows="1" wrap="off" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Type…"></textarea>
 <div class="sym-bar" id="symBar">
@@ -461,46 +712,56 @@
 
 <!-- SETTINGS -->
 <div class="modal-backdrop" id="settingsBackdrop">
-  <div class="modal">
-    <div class="modal-head"><span>⚙️ Settings</span><button class="tbtn" id="closeSettingsBtn">✕</button></div>
-    <div class="modal-body">
-      <div class="set-section">
-        <h4>Controls &amp; Touchpad</h4>
-        <div class="set-row"><span>Smart Pass-Through (click Desmos/widgets without Cursor)</span><input type="checkbox" id="setSmartPass" /></div>
-        <div class="set-row"><span>Pan Mouse Button</span><select id="setPanButton" class="set-input"><option value="2">Right-Click Drag</option><option value="1">Middle-Click Drag</option></select></div>
-        <div class="set-row"><span>Mouse Wheel / Touchpad</span><select id="setWheelMode" class="set-input"><option value="ctrlZoom">Pinch / Ctrl+Wheel = Zoom (Scroll = Pan)</option><option value="alwaysZoom">Wheel = Zoom Always</option></select></div>
-        <div class="set-row"><span>Touchpad / Pinch Zoom Speed (<span id="zoomSpeedLabel">22</span>)</span><input type="range" id="setZoomSpeed" min="6" max="50" step="2" /></div>
-        <div class="set-row"><span>Stylus Mode (Pen draws, Touch pans)</span><input type="checkbox" id="setStylusOnly" /></div>
+  <div class="modal settings" role="dialog" aria-label="Settings">
+    <nav class="snavbar"><span class="stitle">Settings</span><button class="snav on" data-stab="inks"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg><span>Inks</span></button><button class="snav" data-stab="pen"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4.5L16 4.5l3.5 3.5L8.5 19z"/><path d="M14 7l3.5 3.5"/></svg><span>Pen & touch</span></button><button class="snav" data-stab="board"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M8 9h.01M12 9h.01M16 9h.01M8 13h.01M12 13h.01M16 13h.01"/></svg><span>Board</span></button><button class="snav" data-stab="keys"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg><span>Shortcuts</span></button><button class="snav" data-stab="room"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="3"/><circle cx="16.5" cy="10" r="2.5"/><path d="M3.5 19c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5M14.5 15.5c2.5-.4 4.8.8 5.8 3.5"/></svg><span>Room</span></button><button class="snav" data-stab="react"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.6 14.2c.9 1.3 2 1.9 3.4 1.9s2.5-.6 3.4-1.9M9 9.6v.6M15 9.6v.6"/></svg><span>Reactions</span></button><span style="flex:1"></span><button class="tbtn tb" id="resetSettingsBtn">Reset settings</button></nav>
+    <div class="spanes">
+      <div class="shead"><span class="stitle" id="settingsTabTitle">Inks</span><span style="flex:1"></span><button class="tbtn ib" id="closeSettingsBtn" aria-label="Close settings"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="spane" data-spane="inks">
+        <div class="srow stack"><div class="stext"><span class="st">Your colour</span><span class="ss">Your avatar, cursor and ink. A face means someone in the room already has it.</span></div><div class="sctrl"><div class="swatches" id="setMyColorMount"></div></div></div>
+        <div class="srow stack"><div class="stext"><span class="st">Extra inks</span><span class="ss">Next to your colour in the pen tray. Tap one to change it.</span></div><div class="sctrl"><div class="swatches" id="setColorsMount"></div></div></div>
       </div>
-      <div class="set-section">
-        <h4>Whiteboard Defaults</h4>
-        <div class="set-row"><span>Default Tool</span><select id="setDefaultTool" class="set-input"><option value="pen">Pen</option><option value="cursor">Cursor</option><option value="select">Select</option></select></div>
-        <div class="set-row"><span>Default Grid</span><select id="setDefaultGrid" class="set-input"><option value="grid-dot">Dot Grid</option><option value="grid-square">Square Grid</option><option value="grid-none">Blank</option></select></div>
-        <div class="set-row"><span>Shape Snap Delay (<span id="snapDelayLabel">400</span> ms)</span><input type="range" id="setSnapDelay" min="200" max="800" step="50" /></div>
-        <div class="set-row"><span>Laser Fade (<span id="laserFadeLabel">1300</span> ms)</span><input type="range" id="setLaserFade" min="500" max="3000" step="100" /></div>
-        <div class="set-row"><span>Text Size (<span id="textSizeLabel">19</span> px)</span><input type="range" id="setTextSize" min="14" max="32" step="1" /></div>
-        <div class="set-row"><span>5 Ink Colors</span><div id="setColorsMount" style="display:flex;gap:6px;"></div></div>
+      <div class="spane" data-spane="pen">
+        <div class="srow"><div class="stext"><span class="st">Finger never draws</span><span class="ss">On: one finger always moves the board. Off: a finger draws until an Apple Pencil is used, then it moves the board.</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setStylusOnly" /></div></div>
+        <div class="srow"><div class="stext"><span class="st">Move the board with a mouse</span><span class="ss">Space + drag always works too.</span></div><div class="sctrl"><select id="setPanButton" class="sel"><option value="2">Right-drag</option><option value="1">Middle-drag</option></select></div></div>
+        <div class="srow"><div class="stext"><span class="st">Mouse wheel / trackpad</span></div><div class="sctrl"><select id="setWheelMode" class="sel"><option value="ctrlZoom">Scroll moves, pinch zooms</option><option value="alwaysZoom">Wheel always zooms</option></select></div></div>
+        <div class="srow"><div class="stext"><span class="st">Zoom speed</span><span class="ss">Trackpad pinch and Ctrl + scroll</span></div><div class="sctrl"><div class="rangewrap"><input type="range" id="setZoomSpeed" min="6" max="50" step="2" /><span class="rv"><span id="zoomSpeedLabel"></span></span></div></div></div>
+        <div class="srow"><div class="stext"><span class="st">Hold time before a shape snaps</span><span class="ss">Draw a rough line or circle and hold still at the end.</span></div><div class="sctrl"><div class="rangewrap"><input type="range" id="setSnapDelay" min="200" max="800" step="50" /><span class="rv"><span id="snapDelayLabel"></span> ms</span></div></div></div>
+        <div class="srow"><div class="stext"><span class="st">Use windows without switching tool</span><span class="ss">Off: the pen draws over Desmos and formulas; tap a window to use it.</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setSmartPass" /></div></div>
+        <div class="srow"><div class="stext"><span class="st">Press and hold to react</span><span class="ss">Holding still on the board opens the react picker.</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setHoldReact" /></div></div>
       </div>
-      <div class="set-section">
-        <h4>Desmos &amp; Paste</h4>
-        <div class="set-row"><span>Desmos Angles</span><select id="setDesmosAngles" class="set-input"><option value="deg">Degrees</option><option value="rad">Radians</option></select></div>
-        <div class="set-row"><span>Auto Desmos Projector Mode in Zen</span><input type="checkbox" id="setZenProj" /></div>
-        <div class="set-row"><span>Ctrl+V Image Action</span><select id="setPasteTarget" class="set-input"><option value="desmos">Desmos Photo on Board</option><option value="question">Replace Center Question Image</option></select></div>
+      <div class="spane" data-spane="board">
+        <div class="srow"><div class="stext"><span class="st">Background</span></div><div class="sctrl"><select id="setDefaultGrid" class="sel"><option value="grid-dot">Dots</option><option value="grid-square">Grid</option><option value="grid-none">Blank</option></select></div></div>
+        <div class="srow"><div class="stext"><span class="st">Start with</span><span class="ss">The tool that is on when the site opens.</span></div><div class="sctrl"><select id="setDefaultTool" class="sel"><option value="pen">Pen</option><option value="select">Select</option><option value="cursor">Hand</option></select></div></div>
+        <div class="srow"><div class="stext"><span class="st">Text size</span><span class="ss">Text you type on the board</span></div><div class="sctrl"><div class="rangewrap"><input type="range" id="setTextSize" min="14" max="32" step="1" /><span class="rv"><span id="textSizeLabel"></span> px</span></div></div></div>
+        <div class="srow"><div class="stext"><span class="st">Laser trail</span><span class="ss">How long the laser line stays</span></div><div class="sctrl"><div class="rangewrap"><input type="range" id="setLaserFade" min="500" max="3000" step="100" /><span class="rv"><span id="laserFadeLabel"></span> ms</span></div></div></div>
+        <div class="srow"><div class="stext"><span class="st">Desmos angles</span></div><div class="sctrl"><select id="setDesmosAngles" class="sel"><option value="deg">Degrees</option><option value="rad">Radians</option></select></div></div>
+        <div class="srow"><div class="stext"><span class="st">Pasted pictures go to</span><span class="ss">Ctrl + V with an image copied</span></div><div class="sctrl"><select id="setPasteTarget" class="sel"><option value="desmos">The board</option><option value="question">The question</option></select></div></div>
+        <div class="srow"><div class="stext"><span class="st">Desmos projector mode in Zen</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setZenProj" /></div></div>
       </div>
-      <div class="set-section">
-        <h4>Keyboard Shortcuts (Works on Russian / English Layouts)</h4>
-        <div id="keybindsMount" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;"></div>
+      <div class="spane" data-spane="keys">
+        <div class="ss" style="padding:8px 0">Tap a key to change it, then press the new key.</div>
+        <div id="keybindsMount" class="keygrid"></div>
       </div>
-      <div class="set-section">
-        <h4>Supabase Override (Optional if set in config.js)</h4>
-        <div class="set-row"><span>URL</span><input type="text" id="setSbUrl" class="set-input" style="width:320px;" /></div>
-        <div class="set-row"><span>Anon Key</span><input type="password" id="setSbKey" class="set-input" style="width:320px;" /></div>
-        <div class="set-row"><button class="tbtn active" id="testSbBtn">Connect</button><span id="sbStatusText" style="font-size:11px;color:var(--muted);"></span></div>
+      <div class="spane" data-spane="room">
+        <div class="srow"><div class="stext"><span class="st">Your name</span><span class="ss">On your cursor and avatar</span></div><div class="sctrl"><input type="text" id="setNameInput" class="inp" maxlength="24" /></div></div>
+        <div class="srow"><div class="stext"><span class="st">Room</span><span class="ss">Join, create or leave a room.</span></div><div class="sctrl"><button class="tbtn tb bordered" id="settingsRoomBtn">Open room</button></div></div>
+        <div class="srow"><div class="stext"><span class="st">Let others bring me to their view</span><span class="ss">Off: you get a "Go to them" button instead of being moved.</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setAllowBring" /></div></div>
+        <div class="srow"><div class="stext"><span class="st">Sound when the timer ends</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setTimerSound" /></div></div>
+        <details class="adv"><summary>Sync server (advanced)</summary>
+          <div class="srow"><div class="stext"><span class="st">URL</span></div><div class="sctrl"><input type="text" id="setSbUrl" class="inp" /></div></div>
+          <div class="srow"><div class="stext"><span class="st">Key</span></div><div class="sctrl"><input type="password" id="setSbKey" class="inp" /></div></div>
+          <div class="srow"><button class="tbtn tb bordered" id="testSbBtn">Connect</button><span id="sbStatusText" class="ss"></span></div>
+        </details>
       </div>
-      <div class="set-row" style="justify-content:flex-end;"><button class="tbtn" id="resetSettingsBtn" style="border:1px solid #dc2626;color:#dc2626;">Reset Settings</button></div>
+      <div class="spane" data-spane="react">
+        <div class="srow stack"><div class="stext"><span class="st">Quick row</span><span class="ss">The 8 reactions in the picker. Tap a slot, then tap an emoji to put it there.</span></div><div class="sctrl"><div class="quickrow" id="setQuickMount"></div></div></div>
+        <div class="emojigrid" id="setEmojiGrid"></div>
+      </div>
     </div>
   </div>
 </div>
+
+
 
 <!-- ROOM MODAL -->
 <div class="modal-backdrop" id="roomBackdrop">
@@ -549,6 +810,6 @@
 <script src="data/q_equivalent_expressions.js"></script>
 <script src="data/q_area_volume.js"></script>
 <script src="data/q_one_variable_data.js"></script>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>
