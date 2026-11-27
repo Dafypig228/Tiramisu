@@ -50,6 +50,8 @@
     allowBring: true,
     timerSound: true,
     quick: ['🤯', '🔥', '👏', '😂', '🤔', '😭', '💀', '❤️'],
+    stickers: [],
+    stickerPacks: [],
     desmosAngles: 'deg',
     zenProj: true,
     pasteTarget: 'desmos',
@@ -592,6 +594,7 @@
       })
       .on('broadcast', { event: 'react' }, ({ payload }) => {
         if (payload.sender === peerId || payload.questionId !== currentQ().id) return;
+        if (payload.sticker) { floatSticker(payload.wx, payload.wy, payload.sticker, payload.name); return; }
         floatEmoji(payload.wx, payload.wy, payload.emoji, payload.name);
         if (payload.emoji === '❓') toast(`❓ ${payload.name} is lost here`);
       })
@@ -2208,7 +2211,9 @@
     const b = e.target.closest('button'); if (!b) return;
     e.stopPropagation();
     if (!pickerAt) return closePicker();
-    if (b.dataset.lost) addLostPin(pickerAt); else sendReaction(pickerAt, b.dataset.r);
+    if (b.dataset.lost) addLostPin(pickerAt);
+    else if (b.dataset.stk != null) { const st = (settings.stickers || [])[Number(b.dataset.stk)]; if (st) sendSticker(pickerAt, st); }
+    else sendReaction(pickerAt, b.dataset.r);
     closePicker();
   });
   document.getElementById('reactBtn').onclick = () => openPicker(window.innerWidth / 2, window.innerHeight / 2);
@@ -3457,6 +3462,7 @@
     }
     inkColor = settings.myColor;
     renderPickerQuick();
+    renderPickerStickers();
     renderColorPalette();
     applyGrid(settings.defaultGrid);
     setPanHint();
@@ -3875,7 +3881,7 @@
   }
   function retrack() { if (roomChannel) try { roomChannel.track({ id: peerId, cid: clientId, name: myName(), color: myColor() }); } catch {} }
   function populateTiramisuSettings() {
-    renderMyColorSwatches(); renderExtraInks(); renderQuickEditor();
+    renderMyColorSwatches(); renderExtraInks(); renderQuickEditor(); renderStickerSettings();
     $('setNameInput').value = myName();
     $('setHoldReact').checked = settings.holdReact !== false;
     $('setAllowBring').checked = settings.allowBring !== false;
@@ -3892,5 +3898,117 @@
   $('roomNameInput').addEventListener('change', () => { renderPeople(); hello(); retrack(); });
 
   window.__tiramisu = { people, timer: () => timer, following: () => following, followers, cid: () => clientId, objects: () => objects };
+
+  /* ==================== TELEGRAM STICKERS (via Supabase function tg-stickers) ==================== */
+  const STK_MAX = 24;
+  function stickerFn() {
+    const u = (settings.sbUrl || (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || '').trim().replace(/\/+$/, '');
+    return u ? u + '/functions/v1/tg-stickers' : '';
+  }
+  const stkUrl = (fileId) => `${stickerFn()}?file=${encodeURIComponent(fileId)}`;
+  const isSafari = /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
+  let lottieP = null;
+  function loadLottie() {
+    if (window.lottie) return Promise.resolve(window.lottie);
+    if (!lottieP) lottieP = new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/lottie-web@5.12.2/build/player/lottie_light.min.js'; sc.onload = () => res(window.lottie); sc.onerror = rej; document.head.appendChild(sc); });
+    return lottieP;
+  }
+  const lottieData = new Map();
+  function getLottie(id) { if (!lottieData.has(id)) lottieData.set(id, fetch(stkUrl(id)).then(r => { if (!r.ok) throw new Error('sticker ' + r.status); return r.json(); })); return lottieData.get(id); }
+  // A small still picture for grids and the picker.
+  function stickerThumb(st) {
+    const img = document.createElement('img');
+    img.alt = st.emoji || 'sticker'; img.loading = 'lazy'; img.draggable = false;
+    img.src = stkUrl(st.kind === 'static' ? st.id : (st.thumb || st.id));
+    return img;
+  }
+  // The full moving sticker for a reaction.
+  function stickerFull(st, box) {
+    if (st.kind === 'video' && !(isSafari && st.thumb)) {
+      const v = document.createElement('video');
+      v.src = stkUrl(st.id); v.autoplay = true; v.muted = true; v.loop = true; v.playsInline = true; v.setAttribute('playsinline', '');
+      box.appendChild(v); v.play().catch(() => {});
+    } else if (st.kind === 'tgs') {
+      const holder = document.createElement('div'); box.appendChild(holder);
+      Promise.all([loadLottie(), getLottie(st.id)]).then(([L, data]) => { if (holder.isConnected) L.loadAnimation({ container: holder, renderer: 'svg', loop: true, autoplay: true, animationData: data }); })
+        .catch(() => { holder.remove(); if (st.thumb) box.appendChild(stickerThumb(st)); });
+    } else box.appendChild(stickerThumb(st));
+  }
+  function floatSticker(wx, wy, st, name) {
+    if (!st || !st.id || !stickerFn()) return;
+    const sx = cam.x + wx * cam.z, sy = cam.y + wy * cam.z;
+    const d = document.createElement('div'); d.className = 'fx-sticker';
+    d.style.left = sx + 'px'; d.style.top = sy + 'px';
+    stickerFull(st, d); fxLayer.appendChild(d); setTimeout(() => d.remove(), 2900);
+    if (name) {
+      const n = document.createElement('div'); n.className = 'fx-name'; n.textContent = name;
+      n.style.left = sx + 'px'; n.style.top = (sy + 30) + 'px';
+      fxLayer.appendChild(n); setTimeout(() => n.remove(), 2400);
+    }
+  }
+  function sendSticker(pt, st) {
+    const wire = { id: st.id, kind: st.kind, thumb: st.thumb || null, emoji: st.emoji || '' };
+    floatSticker(pt.x, pt.y, wire, null);
+    if (roomChannel) roomChannel.send({ type: 'broadcast', event: 'react', payload: { sender: peerId, questionId: currentQ().id, wx: pt.x, wy: pt.y, sticker: wire, name: myName() } });
+  }
+  function renderPickerStickers() {
+    const m = document.getElementById('rpStickers'); if (!m) return;
+    const list = stickerFn() ? (settings.stickers || []) : [];
+    m.innerHTML = ''; m.classList.toggle('has', list.length > 0);
+    list.forEach((st, i) => { const b = document.createElement('button'); b.dataset.stk = i; b.title = st.emoji || 'Sticker'; b.appendChild(stickerThumb(st)); m.appendChild(b); });
+  }
+
+  // ---- settings: load packs, pick favourites ----
+  let stkPack = null;
+  const stkStatus = (t) => { document.getElementById('stkStatus').textContent = t || ''; };
+  const hasStk = (uid) => (settings.stickers || []).some(s => s.uid === uid);
+  function renderStickerSettings() {
+    document.getElementById('stkCount').textContent = `${(settings.stickers || []).length} / ${STK_MAX}`;
+    const mine = document.getElementById('stkMine'); mine.innerHTML = '';
+    (settings.stickers || []).forEach((st, i) => {
+      const b = document.createElement('button'); b.title = 'Remove from picker'; b.appendChild(stickerThumb(st));
+      const x = document.createElement('span'); x.className = 'x'; x.textContent = '✕'; b.appendChild(x);
+      b.onclick = () => { settings.stickers.splice(i, 1); saveSettings(); renderStickerSettings(); renderPickerStickers(); };
+      mine.appendChild(b);
+    });
+    if (!(settings.stickers || []).length) mine.innerHTML = '';
+    const packs = document.getElementById('stkPacks');
+    packs.innerHTML = (settings.stickerPacks || []).map(p => `<button data-p="${escHtml(p)}" class="${stkPack && stkPack.name === p ? 'on' : ''}">${escHtml(p)}</button>`).join('');
+    packs.querySelectorAll('button').forEach(b => b.onclick = () => loadPack(b.dataset.p));
+    document.getElementById('stkPackTitle').textContent = stkPack ? `${stkPack.title} · tap to add` : '';
+    const grid = document.getElementById('stkPackGrid'); grid.innerHTML = '';
+    if (stkPack) stkPack.stickers.forEach(st => {
+      const b = document.createElement('button'); b.title = st.emoji || ''; b.classList.toggle('on', hasStk(st.uid)); b.appendChild(stickerThumb(st));
+      b.onclick = () => {
+        settings.stickers = settings.stickers || [];
+        if (hasStk(st.uid)) settings.stickers = settings.stickers.filter(s => s.uid !== st.uid);
+        else if (settings.stickers.length >= STK_MAX) { toast(`Picker holds ${STK_MAX} stickers. Remove one first.`); return; }
+        else settings.stickers.push({ id: st.id, uid: st.uid, kind: st.kind, thumb: st.thumb, emoji: st.emoji });
+        saveSettings(); renderStickerSettings(); renderPickerStickers();
+      };
+      grid.appendChild(b);
+    });
+  }
+  async function loadPack(raw) {
+    const fn = stickerFn();
+    if (!fn) { stkStatus('Stickers need the room server. Set it up under Room first.'); return; }
+    const name = String(raw || '').trim(); if (!name) { stkStatus('Paste a pack link first.'); return; }
+    stkStatus('Loading…');
+    try {
+      const r = await fetch(`${fn}?set=${encodeURIComponent(name)}`);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        stkStatus(data.error === 'no_token' ? 'The sticker bot is not set up yet (TELEGRAM_BOT_TOKEN is missing on the server).'
+          : data.error === 'bad_name' ? "That doesn't look like a pack link. It should look like t.me/addstickers/SomeName."
+          : data.error === 'not_found' ? 'Telegram has no pack with that name.' : `Couldn't load it (${r.status}).`);
+        return;
+      }
+      stkPack = data; stkStatus(`${data.stickers.length} stickers`);
+      settings.stickerPacks = [data.name, ...(settings.stickerPacks || []).filter(p => p !== data.name)].slice(0, 8);
+      saveSettings(); document.getElementById('stkPackInput').value = ''; renderStickerSettings();
+    } catch (e) { stkStatus("Couldn't reach the server. Check your connection."); }
+  }
+  document.getElementById('stkLoadBtn').onclick = () => loadPack(document.getElementById('stkPackInput').value);
+  document.getElementById('stkPackInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadPack(e.target.value); });
 
 })();
