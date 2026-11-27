@@ -438,7 +438,7 @@
       .bar-tl .logo { display:none; }
       #openQuestionsBtn { padding:0 4px; min-width:0; } #openQuestionsBtn .mut { display:none; }
       .bar-tr { top:calc(10px + env(safe-area-inset-top)); right:10px; }
-      .bar-tr .people, .bar-tr #gatherBtn, .bar-tr .sep { display:none; }
+      .bar-tr .people, .bar-tr .sep { display:none; }
       .bar-tc { top:auto; bottom:calc(84px + env(safe-area-inset-bottom)); left:118px; right:auto; transform:none; height:48px; }
       #openQuestionsBtn #qNavTopic { display:none; } #openQuestionsBtn #qNavText { display:inline; font-size:15px; color:var(--k); font-weight:600; }
       .bar-bc { bottom:calc(12px + env(safe-area-inset-bottom)); left:10px; right:10px; transform:none; justify-content:space-between; height:60px; }
@@ -478,6 +478,54 @@
     .fx-sticker { position:absolute; width:132px; height:132px; transform:translate(-50%,-60%); pointer-events:none; animation:stkPop 2.8s ease-out forwards; z-index:2; }
     .fx-sticker > * { width:100%; height:100%; object-fit:contain; display:block; }
     @keyframes stkPop { 0% { transform:translate(-50%,-40%) scale(.3); opacity:0; } 12% { transform:translate(-50%,-62%) scale(1.08); opacity:1; } 22% { transform:translate(-50%,-60%) scale(1); } 80% { opacity:1; } 100% { transform:translate(-50%,-75%) scale(1); opacity:0; } }
+    .calc-hint { position:fixed; z-index:70; display:none; align-items:center; gap:10px; height:36px; padding:0 12px; background:#fff; border:2px solid var(--k); border-radius:12px; box-shadow:0 3px 0 var(--k); font:500 15px Fredoka, sans-serif; color:var(--k); pointer-events:none; white-space:nowrap; }
+    .calc-hint.show { display:flex; } .calc-hint b { font-weight:600; font-size:17px; } .calc-hint .mut { font-size:13px; } .calc-hint.err { background:var(--crm); }
+    /* feel */
+    @keyframes pickBounce { 0% { scale:1; } 35% { scale:1.035; } 70% { scale:.99; } 100% { scale:1; } }
+    @keyframes rightPop { 0% { scale:1; } 30% { scale:1.06; } 55% { scale:.985; } 80% { scale:1.01; } 100% { scale:1; } }
+    @keyframes wrongShake { 0%,100% { translate:0 0; } 15% { translate:-8px 0; } 35% { translate:7px 0; } 55% { translate:-5px 0; } 75% { translate:3px 0; } }
+    @keyframes cardIn { 0% { translate:0 -16px; rotate:-2.2deg; scale:1.035; opacity:0; box-shadow:0 14px 0 var(--k); } 55% { translate:0 2px; rotate:.4deg; scale:.995; opacity:1; box-shadow:0 2px 0 var(--k); } 80% { translate:0 -1px; rotate:0deg; scale:1.003; } 100% { translate:0 0; rotate:0deg; scale:1; box-shadow:0 4px 0 var(--k); } }
+    @keyframes avIn { 0% { scale:0; } 60% { scale:1.18; } 100% { scale:1; } }
+    @keyframes crumbFall { 0% { transform:translate(-50%,-50%) rotate(0); opacity:1; } 100% { transform:translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) rotate(var(--r)); opacity:0; } }
+    .anim-pick { animation:pickBounce .34s cubic-bezier(.3,1.4,.5,1); }
+    .anim-right { animation:rightPop .5s ease-out; }
+    .anim-wrong { animation:wrongShake .42s ease-out; }
+    .question-card.anim-in { animation:cardIn .46s cubic-bezier(.2,1,.4,1); }
+    .av.pop-in { animation:avIn .4s cubic-bezier(.3,1.5,.5,1); }
+    .crumb { position:absolute; border-radius:2px; pointer-events:none; animation:crumbFall .62s cubic-bezier(.4,0,.9,.6) both; }
+    @media (prefers-reduced-motion: reduce) { .anim-pick, .anim-right, .anim-wrong, .question-card.anim-in, .av.pop-in, .crumb { animation:none !important; } }
+    /* sleepy cursors */
+    .peer-cursor .pc-icon { display:block; transform-origin:4px 4px; transition:rotate .6s ease, opacity .6s ease; }
+    .peer-cursor .peer-tag { transition:opacity .6s ease; }
+    .peer-cursor.asleep .pc-icon { rotate:28deg; opacity:.55; }
+    .peer-cursor.asleep .peer-tag { opacity:.6; }
+    .peer-cursor .zzz { display:none; position:absolute; left:calc(100% - 4px); top:-6px; width:30px; height:30px; pointer-events:none; }
+    .peer-cursor.asleep .zzz { display:block; }
+    .zzz i { position:absolute; left:0; bottom:0; font:600 17px Fredoka, sans-serif; font-style:normal; color:var(--k); opacity:0; animation:zFloat 2.7s ease-in-out infinite; }
+    .zzz i:nth-child(2) { font-size:14px; animation-delay:.9s; } .zzz i:nth-child(3) { font-size:11px; animation-delay:1.8s; }
+    @keyframes zFloat { 0% { translate:0 0; opacity:0; } 15% { opacity:1; } 80% { opacity:.9; } 100% { translate:14px -22px; opacity:0; } }
+    @keyframes wakeJolt { 0% { translate:0 0; rotate:28deg; scale:1; } 25% { translate:0 -9px; rotate:-14deg; scale:1.25; } 50% { translate:0 2px; rotate:8deg; scale:.95; } 75% { translate:0 -2px; rotate:-3deg; } 100% { translate:0 0; rotate:0deg; scale:1; } }
+    .peer-cursor.wake .pc-icon { animation:wakeJolt .55s cubic-bezier(.3,1.4,.5,1); }
+    .av.asleep { opacity:.6; position:relative; }
+    .av.asleep::after { content:'z'; position:absolute; right:-6px; top:-8px; font:600 11px Fredoka, sans-serif; color:var(--k); background:#fff; border:2px solid var(--k); border-radius:50%; width:16px; height:16px; display:flex; align-items:center; justify-content:center; box-sizing:border-box; line-height:1; }
+    @media (prefers-reduced-motion: reduce) { .zzz i { animation:none; opacity:1; } .zzz i:nth-child(n+2) { display:none; } .peer-cursor.wake .pc-icon { animation:none; } }
+    /* shake to point */
+    .peer-cursor .pc-icon { transition:rotate .6s ease, opacity .6s ease, scale .32s cubic-bezier(.3,1.6,.5,1); }
+    .peer-cursor .peer-tag { transform-origin:left top; transition:opacity .6s ease, scale .32s cubic-bezier(.3,1.6,.5,1), translate .32s cubic-bezier(.3,1.6,.5,1); }
+    .peer-cursor.big .pc-icon { scale:2.7; rotate:0deg; opacity:1; }
+    .peer-cursor.big .peer-tag { scale:1.45; translate:26px 26px; opacity:1; }
+    .peer-cursor.big .zzz { display:none; }
+    #meBig { position:fixed; z-index:61; pointer-events:none; display:none; transform-origin:2px 2px; }
+    #meBig.on { display:block; animation:meBigIn .3s cubic-bezier(.3,1.6,.5,1) both; }
+    #meBig svg { display:block; }
+    @keyframes meBigIn { from { scale:1; } to { scale:2.7; } }
+    @media (prefers-reduced-motion: reduce) { #meBig.on { animation:none; scale:2.7; } }
+    /* cursor styles */
+    .curpicks { display:flex; gap:12px; flex-wrap:wrap; }
+    .curpick { display:flex; flex-direction:column; align-items:center; gap:6px; width:96px; padding:12px 6px 10px; border:2px solid var(--k); border-radius:16px; background:#fff; box-shadow:0 2px 0 var(--k); cursor:pointer; font:500 13px Fredoka, sans-serif; color:var(--k); }
+    .curpick span { width:40px; height:40px; display:flex; align-items:flex-start; justify-content:flex-start; padding:3px 0 0 6px; box-sizing:border-box; }
+    .curpick.on { background:var(--crm); box-shadow:none; transform:translateY(2px); }
+    .curpick small { font-size:13px; }
   </style>
 </head>
 <body>
@@ -530,12 +578,11 @@
 
 <div class="bar bar-tr hide-in-zen" id="barTR">
   <div class="people" id="peopleMount" aria-label="People in the room"></div>
-  <button class="tbtn tb" id="gatherBtn" title="Bring everyone to my view (B)"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/></svg><span class="lbl">Bring everyone</span></button>
   <span class="sep"></span>
   <button class="tbtn tb" id="tabFormulasBtn" title="Formulas (F)"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H7l6 7-6 7h10"/></svg><span class="lbl">Formulas</span></button>
   <button class="tbtn tb" id="tabDesmosBtn" title="Desmos (G)"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16h16"/><path d="M7 15c2.5-7 5-7 7.5-2.5S18 14 20 7"/></svg><span class="lbl">Desmos</span></button>
   <span class="sep ph-hide"></span>
-  <button class="tbtn ib ph-hide" id="reactBtn" title="React, or say &quot;I'm lost here&quot; (or press and hold on the board)" aria-label="React"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.6 14.2c.9 1.3 2 1.9 3.4 1.9s2.5-.6 3.4-1.9M9 9.6v.6M15 9.6v.6"/></svg></button>
+  <button class="tbtn ib ph-hide" id="reactBtn" title="Reactions (Tab, or press and hold on the board)" aria-label="React"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.6 14.2c.9 1.3 2 1.9 3.4 1.9s2.5-.6 3.4-1.9M9 9.6v.6M15 9.6v.6"/></svg></button>
   <button class="tbtn ib" id="moreBtn" title="More" aria-label="More" aria-haspopup="menu"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/></svg></button>
 </div>
 
@@ -733,6 +780,7 @@
       <div class="shead"><span class="stitle" id="settingsTabTitle">Inks</span><span style="flex:1"></span><button class="tbtn ib" id="closeSettingsBtn" aria-label="Close settings"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
       <div class="spane" data-spane="inks">
         <div class="srow stack"><div class="stext"><span class="st">Your colour</span><span class="ss">Your avatar, cursor and ink. A face means someone in the room already has it.</span></div><div class="sctrl"><div class="swatches" id="setMyColorMount"></div></div></div>
+        <div class="srow stack"><div class="stext"><span class="st">Your cursor</span><span class="ss">What everyone else sees when you move around the board.</span></div><div class="curpicks" id="setCursorMount"></div></div>
         <div class="srow stack"><div class="stext"><span class="st">Extra inks</span><span class="ss">Next to your colour in the pen tray. Tap one to change it.</span></div><div class="sctrl"><div class="swatches" id="setColorsMount"></div></div></div>
       </div>
       <div class="spane" data-spane="pen">
@@ -742,6 +790,8 @@
         <div class="srow"><div class="stext"><span class="st">Zoom speed</span><span class="ss">Trackpad pinch and Ctrl + scroll</span></div><div class="sctrl"><div class="rangewrap"><input type="range" id="setZoomSpeed" min="6" max="50" step="2" /><span class="rv"><span id="zoomSpeedLabel"></span></span></div></div></div>
         <div class="srow"><div class="stext"><span class="st">Hold time before a shape snaps</span><span class="ss">Draw a rough line or circle and hold still at the end.</span></div><div class="sctrl"><div class="rangewrap"><input type="range" id="setSnapDelay" min="200" max="800" step="50" /><span class="rv"><span id="snapDelayLabel"></span> ms</span></div></div></div>
         <div class="srow"><div class="stext"><span class="st">Use windows without switching tool</span><span class="ss">Off: the pen draws over Desmos and formulas; tap a window to use it.</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setSmartPass" /></div></div>
+        <div class="srow"><div class="stext"><span class="st">Scribble to erase</span><span class="ss">Scratch back and forth over your own ink with the pen to erase it.</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setScribbleErase" /></div></div>
+        <div class="srow"><div class="stext"><span class="st">Two-finger tap to undo</span><span class="ss">Three fingers to redo. iPad and phone.</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setTapUndo" /></div></div>
         <div class="srow"><div class="stext"><span class="st">Press and hold to react</span><span class="ss">Holding still on the board opens the react picker.</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setHoldReact" /></div></div>
       </div>
       <div class="spane" data-spane="board">
@@ -760,7 +810,6 @@
       <div class="spane" data-spane="room">
         <div class="srow"><div class="stext"><span class="st">Your name</span><span class="ss">On your cursor and avatar</span></div><div class="sctrl"><input type="text" id="setNameInput" class="inp" maxlength="24" /></div></div>
         <div class="srow"><div class="stext"><span class="st">Room</span><span class="ss">Join, create or leave a room.</span></div><div class="sctrl"><button class="tbtn tb bordered" id="settingsRoomBtn">Open room</button></div></div>
-        <div class="srow"><div class="stext"><span class="st">Let others bring me to their view</span><span class="ss">Off: you get a "Go to them" button instead of being moved.</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setAllowBring" /></div></div>
         <div class="srow"><div class="stext"><span class="st">Sound when the timer ends</span></div><div class="sctrl"><input type="checkbox" class="toggle" id="setTimerSound" /></div></div>
         <details class="adv"><summary>Sync server (advanced)</summary>
           <div class="srow"><div class="stext"><span class="st">URL</span></div><div class="sctrl"><input type="text" id="setSbUrl" class="inp" /></div></div>
@@ -835,6 +884,6 @@
 <script src="data/q_equivalent_expressions.js"></script>
 <script src="data/q_area_volume.js"></script>
 <script src="data/q_one_variable_data.js"></script>
-<script src="app.js?v=18"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>
